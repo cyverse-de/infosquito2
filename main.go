@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/sirupsen/logrus"
 
@@ -19,6 +20,8 @@ amqp:
   uri: amqp://guest:guest@rabbit:5672/
   queue_prefix: ""
 
+infosquito:
+  maximum_in_prefix: 10000
 
 elasticsearch:
   base: http://elasticsearch:9200
@@ -51,6 +54,7 @@ var (
 	elasticsearchPassword string
 	elasticsearchIndex    string
 	dbURI                 string
+	maxInPrefix           int
 )
 
 func init() {
@@ -83,6 +87,17 @@ func initConfig(cfgPath string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	dbURI = cfg.GetString("db.uri")
+	elasticsearchBase = cfg.GetString("elasticsearch.base")
+	elasticsearchUser = cfg.GetString("elasticsearch.user")
+	elasticsearchPassword = cfg.GetString("elasticsearch.password")
+	elasticsearchIndex = cfg.GetString("elasticsearch.index")
+	max, err := strconv.Atoi(cfg.GetString("infosquito.maximum_in_prefix"))
+	if err != nil {
+		log.Fatal("Couldn't parse integer out of infosquito.maximum_in_prefix")
+	}
+	maxInPrefix = max
 }
 
 func loadAMQPConfig() {
@@ -90,17 +105,6 @@ func loadAMQPConfig() {
 	amqpExchangeName = cfg.GetString("amqp.exchange.name")
 	amqpExchangeType = cfg.GetString("amqp.exchange.type")
 	amqpQueuePrefix = cfg.GetString("amqp.queue_prefix")
-}
-
-func loadDBConfig() {
-	dbURI = cfg.GetString("db.uri")
-}
-
-func loadElasticsearchConfig() {
-	elasticsearchBase = cfg.GetString("elasticsearch.base")
-	elasticsearchUser = cfg.GetString("elasticsearch.user")
-	elasticsearchPassword = cfg.GetString("elasticsearch.password")
-	elasticsearchIndex = cfg.GetString("elasticsearch.index")
 }
 
 func getQueueName(prefix string) string {
@@ -113,9 +117,6 @@ func getQueueName(prefix string) string {
 func main() {
 	checkMode()
 	initConfig(*cfgPath)
-
-	loadElasticsearchConfig()
-	loadDBConfig()
 
 	db, err := SetupDB(dbURI)
 	if err != nil {
