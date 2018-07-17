@@ -12,21 +12,37 @@ import (
 	"gopkg.in/olivere/elastic.v5"
 )
 
+var (
+	ErrTooManyResults = errors.New("Too many results in prefix")
+)
+
 func logTime(prefixlog *logrus.Entry, start time.Time, rows *struct {
-	rows        int64
-	processed   int64
-	dataobjects int64
-	colls       int64
+	rows                int64
+	processed           int64
+	dataobjects         int64
+	dataobjects_added   int64
+	dataobjects_updated int64
+	dataobjects_removed int64
+	colls               int64
+	colls_added         int64
+	colls_updated       int64
+	colls_removed       int64
 }) {
-	prefixlog.Infof("Processed %d entries (of %d rows, %d data objects, %d colls) in %s", rows.processed, rows.rows, rows.dataobjects, rows.colls, time.Since(start).String())
+	prefixlog.Infof("Processed %d entries (of %d rows, %d data objects (+%d,U%d,-%d), %d colls (+%d,U%d,-%d)) in %s", rows.processed, rows.rows, rows.dataobjects, rows.dataobjects_added, rows.dataobjects_updated, rows.dataobjects_removed, rows.colls, rows.colls_added, rows.colls_updated, rows.colls_removed, time.Since(start).String())
 }
 
 func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 	var rows struct {
-		rows        int64
-		processed   int64
-		dataobjects int64
-		colls       int64
+		rows                int64
+		processed           int64
+		dataobjects         int64
+		dataobjects_added   int64
+		dataobjects_updated int64
+		dataobjects_removed int64
+		colls               int64
+		colls_added         int64
+		colls_updated       int64
+		colls_removed       int64
 	}
 	prefixlog := log.WithFields(logrus.Fields{
 		"prefix": prefix,
@@ -61,6 +77,10 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 	}
 
 	prefixlog.Infof("Got %d documents for prefix %s (ES)", search.Hits.TotalHits, prefix)
+
+	if search.Hits.TotalHits > int64(maxInPrefix) {
+		return ErrTooManyResults
+	}
 
 	esDocs := make(map[string]ElasticsearchDocument)
 	esDocTypes := make(map[string]string)
@@ -124,6 +144,7 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 		_, ok := esDocs[id]
 		if !ok {
 			prefixlog.Infof("data-object %s not in ES, indexing", id)
+			rows.dataobjects_added++
 			reindex = true
 		} else {
 			seenEsDocs[id] = true
@@ -135,6 +156,7 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 
 			if !doc.Equal(esDocs[id]) {
 				prefixlog.Infof("data-object %s, documents differ, indexing", id)
+				rows.dataobjects_updated++
 				reindex = true
 			}
 		}
@@ -169,6 +191,7 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 		_, ok := esDocs[id]
 		if !ok {
 			prefixlog.Infof("collection %s not in ES, indexing", id)
+			rows.colls_added++
 			reindex = true
 		} else {
 			seenEsDocs[id] = true
@@ -180,6 +203,7 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 
 			if !doc.Equal(esDocs[id]) {
 				prefixlog.Infof("collection %s, documents differ, indexing", id)
+				rows.colls_updated++
 				reindex = true
 			}
 		}
@@ -204,6 +228,11 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 			if !ok {
 				prefixlog.Errorf("Could not find type for document %s, making rash assumptions", id)
 				docType = "file"
+			}
+			if docType == "file" {
+				rows.dataobjects_removed++
+			} else if docType == "folder" {
+				rows.colls_removed++
 			}
 			req := elastic.NewBulkDeleteRequest().Index(es.index).Type(docType).Id(id)
 			err := indexer.Add(req)
