@@ -93,7 +93,8 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 		b, _ := hit.Source.MarshalJSON()
 		err := json.Unmarshal(b, &doc)
 		if err != nil {
-			return err
+			// if it can't unmarshal the elasticsearch response, may as well just let it reindex the thing
+			continue
 		}
 
 		esDocs[hit.Id] = doc
