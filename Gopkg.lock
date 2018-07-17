@@ -26,6 +26,12 @@
   version = "v5"
 
 [[projects]]
+  name = "github.com/deckarep/golang-set"
+  packages = ["."]
+  revision = "1d4478f51bed434f1dadf96dcd9b43aabac66795"
+  version = "v1.7"
+
+[[projects]]
   name = "github.com/fsnotify/fsnotify"
   packages = ["."]
   revision = "c2828203cd70a50dcccfb2761f8b1f8ceef9a8e9"
@@ -184,6 +190,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "4245e7bc11cef6011421d5eb307d88503feb5556a7de3fc8a7e6690d410bf1eb"
+  inputs-digest = "336d59cbd8b8d77e9f29e9f8610ab88b2f9b51a97a322c7b7373a5123aaacc96"
   solver-name = "gps-cdcl"
   solver-version = 1

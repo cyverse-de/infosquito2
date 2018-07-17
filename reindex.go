@@ -10,30 +10,6 @@ import (
 	"gopkg.in/olivere/elastic.v5"
 )
 
-type Metadatum struct {
-	Attribute string `json:"attribute"`
-	Value     string `json:"value"`
-	Unit      string `json:"unit"`
-}
-
-type UserPermission struct {
-	User       string `json:"user"`
-	Permission string `json:"permission"`
-}
-
-type ElasticsearchDocument struct {
-	Id              string           `json:"id"`
-	Path            string           `json:"path"`
-	Label           string           `json:"label"`
-	Creator         string           `json:"creator"`
-	FileType        string           `json:"fileType"`
-	DateCreated     int64            `json:"dateCreated"`
-	DateModified    int64            `json:"dateModified"`
-	FileSize        int64            `json:"fileSize"`
-	Metadata        []Metadatum      `json:"metadata"`
-	UserPermissions []UserPermission `json:"userPermissions"`
-}
-
 func logTime(prefixlog *logrus.Entry, start time.Time, rows *struct {
 	rows        int64
 	processed   int64
