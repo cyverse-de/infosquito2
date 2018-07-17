@@ -27,6 +27,10 @@ func (b *BulkIndexer) Add(r elastic.BulkableRequest) error {
 	return nil
 }
 
+func (b *BulkIndexer) CanFlush() bool {
+	return b.bulkService.NumberOfActions() > 0
+}
+
 func (b *BulkIndexer) Flush() error {
 	_, err := b.bulkService.Do(context.TODO())
 	if err != nil {

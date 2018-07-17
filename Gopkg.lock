@@ -17,7 +17,7 @@
   branch = "master"
   name = "github.com/cyverse-de/esutils"
   packages = ["."]
-  revision = "09b6508540fbf2adcc1a6096e6c5a1e2793c7d6c"
+  revision = "d4c3a954cea5961c3bdbf7a86da4e233a2d141dd"
 
 [[projects]]
   name = "github.com/cyverse-de/messaging"

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/sirupsen/logrus"
 	"gopkg.in/olivere/elastic.v5"
 )
@@ -48,9 +50,7 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 	prefixlog.Infof("Got %d rows for prefix %s (note that this may include stale unused metadata)", rows.rows, prefix)
 
 	// Resplit if relevant -- maybe throw error?
-	if rows.rows == 0 {
-		return nil
-	}
+	// If no rows from icat, do what?
 
 	prefixQuery := elastic.NewBoolQuery().MinimumNumberShouldMatch(1).Should(elastic.NewPrefixQuery("id", strings.ToUpper(prefix)), elastic.NewPrefixQuery("id", strings.ToLower(prefix)))
 
@@ -62,21 +62,22 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 
 	prefixlog.Infof("Got %d documents for prefix %s (ES)", search.Hits.TotalHits, prefix)
 
+	esDocs := make(map[string]ElasticsearchDocument)
+	esDocTypes := make(map[string]string)
+	seenEsDocs := make(map[string]bool)
+
 	for _, hit := range search.Hits.Hits {
-		// json.RawMessage's MarshalJSON can't actually throw an error, it's just matching a function signature
 		var doc ElasticsearchDocument
+
+		// json.RawMessage's MarshalJSON can't actually throw an error, it's just matching a function signature
 		b, _ := hit.Source.MarshalJSON()
 		err := json.Unmarshal(b, &doc)
 		if err != nil {
 			return err
 		}
 
-		_, err = json.Marshal(doc)
-		if err != nil {
-			return err
-		}
-
-		//prefixlog.Info(string(b2))
+		esDocs[hit.Id] = doc
+		esDocTypes[hit.Id] = hit.Type
 	}
 
 	r, err = tx.CreateTemporaryTable("object_perms", `select object_id, json_agg(format('{"user": %s, "permission": %s}', to_json(u.user_name || '#' || u.zone_name), (
@@ -103,6 +104,9 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 
 	prefixlog.Infof("Got %d rows for metadata", r)
 
+	indexer := es.NewBulkIndexer(1000)
+	defer indexer.Flush()
+
 	dataobjects, err := tx.GetDataObjects("object_uuids", "object_perms", "object_metadata")
 	if err != nil {
 		return err
@@ -115,7 +119,34 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 			return err
 		}
 
-		//prefixlog.Info(selectedJson)
+		reindex := false
+
+		_, ok := esDocs[id]
+		if !ok {
+			prefixlog.Infof("data-object %s not in ES, indexing", id)
+			reindex = true
+		} else {
+			seenEsDocs[id] = true
+			var doc ElasticsearchDocument
+			err := json.Unmarshal([]byte(selectedJson), &doc)
+			if err != nil {
+				return err
+			}
+
+			if !doc.Equal(esDocs[id]) {
+				prefixlog.Infof("data-object %s, documents differ, indexing", id)
+				reindex = true
+			}
+		}
+
+		if reindex {
+			req := elastic.NewBulkIndexRequest().Index(es.index).Type("file").Id(id).Doc(selectedJson)
+			err = indexer.Add(req)
+			if err != nil {
+				return err
+			}
+		}
+
 		rows.processed++
 		rows.dataobjects++
 	}
@@ -133,12 +164,65 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 			return err
 		}
 
-		//prefixlog.Info(selectedJson)
+		reindex := false
+
+		_, ok := esDocs[id]
+		if !ok {
+			prefixlog.Infof("collection %s not in ES, indexing", id)
+			reindex = true
+		} else {
+			seenEsDocs[id] = true
+			var doc ElasticsearchDocument
+			err := json.Unmarshal([]byte(selectedJson), &doc)
+			if err != nil {
+				return err
+			}
+
+			if !doc.Equal(esDocs[id]) {
+				prefixlog.Infof("collection %s, documents differ, indexing", id)
+				reindex = true
+			}
+		}
+
+		if reindex {
+			req := elastic.NewBulkIndexRequest().Index(es.index).Type("folder").Id(id).Doc(selectedJson)
+			err = indexer.Add(req)
+			if err != nil {
+				return err
+			}
+		}
+
 		rows.processed++
 		rows.colls++
 	}
 	colls.Close()
 
+	for id, _ := range esDocs {
+		if !seenEsDocs[id] {
+			prefixlog.Infof("ID %s not seen in ICAT, deleting", id)
+			docType, ok := esDocTypes[id]
+			if !ok {
+				prefixlog.Errorf("Could not find type for document %s, making rash assumptions", id)
+				docType = "file"
+			}
+			req := elastic.NewBulkDeleteRequest().Index(es.index).Type(docType).Id(id)
+			err := indexer.Add(req)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if indexer.CanFlush() {
+		err = indexer.Flush()
+		if err != nil {
+			e := errors.Wrap(err, "Got error flushing bulk indexer")
+			log.Error(e)
+			return e
+		}
+	} else {
+		log.Info("No bulk actions to flush, finishing")
+	}
 	// Set up other temp tables
 
 	// fetch everything in prefix from ES (files & folders)
