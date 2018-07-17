@@ -75,8 +75,45 @@ func (tx *ICATTx) Count(table string) (int64, error) {
 	return count, nil
 }
 
-//func (tx *ICATTx) GetDataObjects(uuidTable string, permsTable string, metaTable string) (*sql.Rows, error) {
-//}
-//
-//func (tx *ICATTx) GetCollections(uuidTable string, permsTable string, metaTable string) (*sql.Rows, error) {
-//}
+func (tx *ICATTx) GetDataObjects(uuidTable string, permsTable string, metaTable string) (*sql.Rows, error) {
+	query := fmt.Sprintf(`SELECT id, to_json(q.*) FROM (
+SELECT ou.id "id",
+       (c.coll_name || '/' || d1.data_name) "path",
+       d1.data_name "label",
+       (d1.data_owner_name || '#' || d1.data_owner_zone) "creator",
+       cast(d1.create_ts AS BIGINT)*1000 AS "dateCreated",
+       cast(d1.modify_ts AS BIGINT)*1000 AS "dateModified",
+       d1.data_size                      AS "fileSize",
+       d1.data_type_name                 AS "fileType",
+       op."userPermissions"              AS "userPermissions",
+       om.metadata                       AS "metadata"
+  FROM r_data_main d1
+  JOIN r_coll_main c USING (coll_id)
+  JOIN %[1]s ou on d1.data_id = ou.object_id
+  LEFT JOIN %[2]s op USING (object_id)
+  LEFT JOIN %[3]s om USING (object_id)
+ WHERE c.coll_name LIKE '/iplant/%%' AND d1.data_repl_num = (SELECT min(d2.data_repl_num) FROM r_data_main d2 WHERE d2.data_id = d1.data_id)) q ORDER BY id`, uuidTable, permsTable, metaTable)
+
+	return tx.tx.Query(query)
+}
+
+func (tx *ICATTx) GetCollections(uuidTable string, permsTable string, metaTable string) (*sql.Rows, error) {
+	query := fmt.Sprintf(`SELECT id, to_json(q.*) FROM (
+SELECT ou.id "id",
+       coll_name "path",
+       REPLACE(coll_name, parent_coll_name || '/', '') "label",
+       (coll_owner_name || '#' || coll_owner_zone) "creator",
+       cast(create_ts AS BIGINT)*1000 AS "dateCreated",
+       cast(modify_ts AS BIGINT)*1000 AS "dateModified",
+       0                                 AS "fileSize",
+       ''                                AS "fileType",
+       op."userPermissions"              AS "userPermissions",
+       om.metadata                       AS "metadata"
+  FROM r_coll_main c
+  JOIN %[1]s ou on coll_id = ou.object_id
+  LEFT JOIN %[2]s op USING (object_id)
+  LEFT JOIN %[3]s om USING (object_id)
+ WHERE coll_name LIKE '/iplant/%%' and coll_type = '') q ORDER BY id`, uuidTable, permsTable, metaTable)
+
+	return tx.tx.Query(query)
+}
