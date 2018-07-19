@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/cyverse-de/messaging"
-	//"github.com/streadway/amqp"
+	"github.com/streadway/amqp"
 )
 
 const defaultConfig = `
@@ -207,6 +207,46 @@ func main() {
 	publishClient.SetupPublishing(amqpExchangeName)
 
 	go listenClient.Listen()
+
+	queueName := getQueueName(amqpQueuePrefix)
+	listenClient.AddConsumerMulti(
+		amqpExchangeName,
+		amqpExchangeType,
+		queueName,
+		[]string{"index.all", "index.data", "index.data.prefix.#"},
+		func(del amqp.Delivery) {
+			var err error
+			log.Infof("Got message %s", del.RoutingKey)
+			if del.RoutingKey == "index.all" || del.RoutingKey == "index.data" {
+				for _, prefix := range generatePrefixes(basePrefixLength) {
+					err = publishClient.Publish(fmt.Sprintf("index.data.prefix.%s", prefix), []byte{})
+					if err != nil {
+						del.Reject(!del.Redelivered)
+						return
+					}
+				}
+			} else {
+				prefix := del.RoutingKey[18:]
+				log.Infof("Triggered reindexing prefix %s", prefix)
+				err = ReindexPrefix(db, es, prefix)
+				if err == ErrTooManyResults {
+					log.Infof("Prefix %s too large, splitting", prefix)
+					for _, newprefix := range splitPrefix(prefix) {
+						err = publishClient.Publish(fmt.Sprintf("index.data.prefix.%s", newprefix), []byte{})
+						if err != nil {
+							del.Reject(!del.Redelivered)
+							return
+						}
+					}
+				} else if err != nil {
+					del.Reject(!del.Redelivered)
+					return
+				}
+			}
+			del.Ack(false)
+			return
+		},
+		1)
 
 	spin()
 }
