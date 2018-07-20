@@ -33,6 +33,9 @@ db:
   uri: postgres://ICAT:fakepassword@icat-db:5432/ICAT?sslmode=disable
 `
 
+const prefixRoutingKey string = "index.data.prefix"
+const prefixRoutingKeyLen int = len(prefixRoutingKey)
+
 var log = logrus.WithFields(logrus.Fields{
 	"service": "infosquito2",
 	"art-id":  "infosquito2",
@@ -161,6 +164,36 @@ func TryReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error
 	return nil
 }
 
+func publishPrefixMessages(prefixes []string, client *messaging.Client, del amqp.Delivery) error {
+	for _, prefix := range prefixes {
+		err := client.Publish(fmt.Sprintf("%s.%s", prefixRoutingKey, prefix), []byte{})
+		if err != nil {
+			del.Reject(!del.Redelivered)
+			return err
+		}
+	}
+	return nil
+}
+
+func handleIndex(del amqp.Delivery, publishClient *messaging.Client) error {
+	return publishPrefixMessages(generatePrefixes(basePrefixLength), publishClient, del)
+}
+
+func handlePrefix(del amqp.Delivery, db *ICATConnection, es *ESConnection, publishClient *messaging.Client) error {
+	prefix := del.RoutingKey[prefixRoutingKeyLen+1:]
+	log.Infof("Triggered reindexing prefix %s", prefix)
+	err := ReindexPrefix(db, es, prefix)
+	if err == ErrTooManyResults {
+		log.Infof("Prefix %s too large, splitting", prefix)
+		publishPrefixMessages(splitPrefix(prefix), publishClient, del)
+	} else if err != nil {
+		del.Reject(!del.Redelivered)
+		return err
+	}
+
+	return nil
+}
+
 func main() {
 	checkMode()
 	initConfig(*cfgPath)
@@ -213,35 +246,17 @@ func main() {
 		amqpExchangeName,
 		amqpExchangeType,
 		queueName,
-		[]string{"index.all", "index.data", "index.data.prefix.#"},
+		[]string{"index.all", "index.data", fmt.Sprintf("%s.#", prefixRoutingKey)},
 		func(del amqp.Delivery) {
 			var err error
 			log.Infof("Got message %s", del.RoutingKey)
 			if del.RoutingKey == "index.all" || del.RoutingKey == "index.data" {
-				for _, prefix := range generatePrefixes(basePrefixLength) {
-					err = publishClient.Publish(fmt.Sprintf("index.data.prefix.%s", prefix), []byte{})
-					if err != nil {
-						del.Reject(!del.Redelivered)
-						return
-					}
-				}
+				err = handleIndex(del, publishClient)
 			} else {
-				prefix := del.RoutingKey[18:]
-				log.Infof("Triggered reindexing prefix %s", prefix)
-				err = ReindexPrefix(db, es, prefix)
-				if err == ErrTooManyResults {
-					log.Infof("Prefix %s too large, splitting", prefix)
-					for _, newprefix := range splitPrefix(prefix) {
-						err = publishClient.Publish(fmt.Sprintf("index.data.prefix.%s", newprefix), []byte{})
-						if err != nil {
-							del.Reject(!del.Redelivered)
-							return
-						}
-					}
-				} else if err != nil {
-					del.Reject(!del.Redelivered)
-					return
-				}
+				err = handlePrefix(del, db, es, publishClient)
+			}
+			if err != nil {
+				return
 			}
 			del.Ack(false)
 			return
