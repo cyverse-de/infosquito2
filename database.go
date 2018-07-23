@@ -65,16 +65,6 @@ func (tx *ICATTx) CreateTemporaryTable(name string, query string, args ...interf
 	return rowsAffected, nil
 }
 
-func (tx *ICATTx) Count(table string) (int64, error) {
-	row := tx.tx.QueryRow(fmt.Sprintf("SELECT count(*) FROM %s", table))
-	var count int64
-	err := row.Scan(&count)
-	if err != nil {
-		return 0, err
-	}
-	return count, nil
-}
-
 func (tx *ICATTx) GetDataObjects(uuidTable string, permsTable string, metaTable string) (*sql.Rows, error) {
 	query := fmt.Sprintf(`SELECT id, to_json(q.*) FROM (
 SELECT ou.id "id",
