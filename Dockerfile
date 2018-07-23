@@ -1,5 +1,7 @@
 FROM golang:1.9-alpine
 
+RUN go get -u github.com/jstemmer/go-junit-report
+
 ARG git_commit=unknown
 ARG version="2.9.0"
 ARG descriptive_version=unknown
