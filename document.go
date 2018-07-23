@@ -28,14 +28,53 @@ type ElasticsearchDocument struct {
 	UserPermissions []UserPermission `json:"userPermissions"`
 }
 
+func metadataEqual(one, two []Metadatum) bool {
+	om := make([]interface{}, len(one))
+	for i := range one {
+		om[i] = one[i]
+	}
+	tm := make([]interface{}, len(two))
+	for i := range two {
+		tm[i] = two[i]
+	}
+	if !set.NewSetFromSlice(om).Equal(set.NewSetFromSlice(tm)) {
+		return false
+	}
+	return true
+}
+
+func permsEqual(one, two []UserPermission) bool {
+	om := make([]interface{}, len(one))
+	for i := range one {
+		om[i] = one[i]
+	}
+	tm := make([]interface{}, len(two))
+	for i := range two {
+		tm[i] = two[i]
+	}
+	if !set.NewSetFromSlice(om).Equal(set.NewSetFromSlice(tm)) {
+		return false
+	}
+	return true
+}
+
 func (doc ElasticsearchDocument) Equal(other ElasticsearchDocument) bool {
-	if doc.Id != other.Id {
+	// User-modifiable fields in rough "likelihood" order
+	if doc.DateModified != other.DateModified {
+		return false
+	}
+	if doc.FileSize != other.FileSize {
 		return false
 	}
 	if doc.Path != other.Path {
 		return false
 	}
 	if doc.Label != other.Label {
+		return false
+	}
+
+	// Fields which shouldn't change for the same object
+	if doc.Id != other.Id {
 		return false
 	}
 	if doc.Creator != other.Creator {
@@ -47,34 +86,13 @@ func (doc ElasticsearchDocument) Equal(other ElasticsearchDocument) bool {
 	if doc.DateCreated != other.DateCreated {
 		return false
 	}
-	if doc.DateModified != other.DateModified {
-		return false
-	}
-	if doc.FileSize != other.FileSize {
+
+	// More computationally intensive fields to compare
+	if !metadataEqual(doc.Metadata, other.Metadata) {
 		return false
 	}
 
-	dm := make([]interface{}, len(doc.Metadata))
-	for i := range doc.Metadata {
-		dm[i] = doc.Metadata[i]
-	}
-	om := make([]interface{}, len(other.Metadata))
-	for i := range other.Metadata {
-		om[i] = other.Metadata[i]
-	}
-	if !set.NewSetFromSlice(dm).Equal(set.NewSetFromSlice(om)) {
-		return false
-	}
-
-	dp := make([]interface{}, len(doc.UserPermissions))
-	for i := range doc.UserPermissions {
-		dp[i] = doc.UserPermissions[i]
-	}
-	op := make([]interface{}, len(other.UserPermissions))
-	for i := range other.UserPermissions {
-		op[i] = other.UserPermissions[i]
-	}
-	if !set.NewSetFromSlice(dp).Equal(set.NewSetFromSlice(op)) {
+	if !permsEqual(doc.UserPermissions, other.UserPermissions) {
 		return false
 	}
 
