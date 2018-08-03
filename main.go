@@ -48,9 +48,6 @@ var (
 	debug   = flag.Bool("debug", false, "Set to true to enable debug logging")
 	cfg     *viper.Viper
 
-	listenClient  *messaging.Client
-	publishClient *messaging.Client
-
 	amqpURI               string
 	amqpExchangeName      string
 	amqpExchangeType      string
@@ -76,13 +73,7 @@ func init() {
 
 func spin() {
 	spinner := make(chan int)
-	for {
-		select {
-		case <-spinner:
-			fmt.Println("Exiting")
-			break
-		}
-	}
+	<-spinner
 }
 
 func checkMode() {
@@ -149,11 +140,11 @@ func splitPrefix(prefix string) []string {
 	return res
 }
 
-func TryReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
+func tryReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 	err := ReindexPrefix(db, es, prefix)
 	if err == ErrTooManyResults {
 		for _, newprefix := range splitPrefix(prefix) {
-			err = TryReindexPrefix(db, es, newprefix)
+			err = tryReindexPrefix(db, es, newprefix)
 			if err != nil {
 				return err
 			}
@@ -185,7 +176,7 @@ func handlePrefix(del amqp.Delivery, db *ICATConnection, es *ESConnection, publi
 	err := ReindexPrefix(db, es, prefix)
 	if err == ErrTooManyResults {
 		log.Infof("Prefix %s too large, splitting", prefix)
-		publishPrefixMessages(splitPrefix(prefix), publishClient, del)
+		return publishPrefixMessages(splitPrefix(prefix), publishClient, del)
 	} else if err != nil {
 		del.Reject(!del.Redelivered)
 		return err
@@ -213,7 +204,7 @@ func main() {
 		// do full mode
 		for _, prefix := range generatePrefixes(basePrefixLength) {
 			log.Infof("Reindexing prefix %s", prefix)
-			err := TryReindexPrefix(db, es, prefix)
+			err = tryReindexPrefix(db, es, prefix)
 			if err != nil {
 				log.Fatal(err)
 			}

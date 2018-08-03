@@ -10,14 +10,17 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// ICATConnection wraps a sql.DB for the ICAT
 type ICATConnection struct {
 	db *sql.DB
 }
 
+// ICATTx wraps a sql.Tx for the ICAT
 type ICATTx struct {
 	tx *sql.Tx
 }
 
+// SetupDB initializes an ICATConnection for the given dbURI
 func SetupDB(dbURI string) (*ICATConnection, error) {
 	connector, err := dbutil.NewDefaultConnector("1m")
 	if err != nil {
@@ -39,6 +42,7 @@ func SetupDB(dbURI string) (*ICATConnection, error) {
 	return &ICATConnection{db: db}, nil
 }
 
+// BeginTx starts an ICATTx for the given ICATConnection
 func (d *ICATConnection) BeginTx(ctx context.Context, opts *sql.TxOptions) (*ICATTx, error) {
 	tx, err := d.db.BeginTx(ctx, opts)
 	if err != nil {
@@ -47,6 +51,7 @@ func (d *ICATConnection) BeginTx(ctx context.Context, opts *sql.TxOptions) (*ICA
 	return &ICATTx{tx: tx}, nil
 }
 
+// CreateTemporaryTable creates a temporary table set to ON COMMIT DROP for the given name and query on the given ICATTx
 func (tx *ICATTx) CreateTemporaryTable(name string, query string, args ...interface{}) (int64, error) {
 	res, err := tx.tx.Exec(fmt.Sprintf("CREATE TEMPORARY TABLE %s ON COMMIT DROP AS %s", name, query), args...)
 	if err != nil {
@@ -65,6 +70,7 @@ func (tx *ICATTx) CreateTemporaryTable(name string, query string, args ...interf
 	return rowsAffected, nil
 }
 
+// GetDataObjects returns a sql.Rows for data objects using the temporary tables which should already be set up
 func (tx *ICATTx) GetDataObjects(uuidTable string, permsTable string, metaTable string) (*sql.Rows, error) {
 	query := fmt.Sprintf(`SELECT id, to_json(q.*) FROM (
 SELECT ou.id "id",
@@ -87,6 +93,7 @@ SELECT ou.id "id",
 	return tx.tx.Query(query)
 }
 
+// GetCollections returns a sql.Rows for collections using the temporary tables which should already be set up
 func (tx *ICATTx) GetCollections(uuidTable string, permsTable string, metaTable string) (*sql.Rows, error) {
 	query := fmt.Sprintf(`SELECT id, to_json(q.*) FROM (
 SELECT ou.id "id",

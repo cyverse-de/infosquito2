@@ -14,33 +14,38 @@ import (
 )
 
 var (
+	// ErrTooManyResults indicates too many results
 	ErrTooManyResults = errors.New("Too many results in prefix")
 )
 
+// DocumentClassification specifies whether a given document should be updated, reindexed, or nothing
 type DocumentClassification int
 
 const (
+	// NoAction : Take no action
 	NoAction DocumentClassification = iota
+	// IndexDocument : Index the document
 	IndexDocument
+	// UpdateDocument : Update the document (probably by reindexing, but still different)
 	UpdateDocument
 )
 
 type rowMetadata struct {
-	rows                int64
-	documents           int64
-	processed           int64
-	dataobjects         int64
-	dataobjects_added   int64
-	dataobjects_updated int64
-	dataobjects_removed int64
-	colls               int64
-	colls_added         int64
-	colls_updated       int64
-	colls_removed       int64
+	rows               int64
+	documents          int64
+	processed          int64
+	dataobjects        int64
+	dataobjectsAdded   int64
+	dataobjectsUpdated int64
+	dataobjectsRemoved int64
+	colls              int64
+	collsAdded         int64
+	collsUpdated       int64
+	collsRemoved       int64
 }
 
 func logTime(prefixlog *logrus.Entry, start time.Time, rows *rowMetadata) {
-	prefixlog.Infof("Processed %d entries (%d rows, %d documents, processed %d data objects (+%d,U%d,-%d), %d colls (+%d,U%d,-%d)) in %s", rows.processed, rows.rows, rows.documents, rows.dataobjects, rows.dataobjects_added, rows.dataobjects_updated, rows.dataobjects_removed, rows.colls, rows.colls_added, rows.colls_updated, rows.colls_removed, time.Since(start).String())
+	prefixlog.Infof("Processed %d entries (%d rows, %d documents, processed %d data objects (+%d,U%d,-%d), %d colls (+%d,U%d,-%d)) in %s", rows.processed, rows.rows, rows.documents, rows.dataobjects, rows.dataobjectsAdded, rows.dataobjectsUpdated, rows.dataobjectsRemoved, rows.colls, rows.collsAdded, rows.collsUpdated, rows.collsRemoved, time.Since(start).String())
 }
 
 func createUuidsTable(log *logrus.Entry, prefix string, tx *ICATTx) (int64, error) {
@@ -129,15 +134,14 @@ func classify(id, jsonstr string, esDocs map[string]ElasticsearchDocument) (Docu
 	_, ok := esDocs[id]
 	if !ok {
 		return IndexDocument, nil
-	} else {
-		var doc ElasticsearchDocument
-		if err := json.Unmarshal([]byte(jsonstr), &doc); err != nil {
-			return NoAction, err
-		}
+	}
+	var doc ElasticsearchDocument
+	if err := json.Unmarshal([]byte(jsonstr), &doc); err != nil {
+		return NoAction, err
+	}
 
-		if !doc.Equal(esDocs[id]) {
-			return UpdateDocument, nil
-		}
+	if !doc.Equal(esDocs[id]) {
+		return UpdateDocument, nil
 	}
 
 	return NoAction, nil
@@ -145,10 +149,8 @@ func classify(id, jsonstr string, esDocs map[string]ElasticsearchDocument) (Docu
 
 func index(indexer *esutils.BulkIndexer, index, id, t, json string) error {
 	req := elastic.NewBulkIndexRequest().Index(index).Type(t).Id(id).Doc(json)
-	if err := indexer.Add(req); err != nil {
-		return err
-	}
-	return nil
+	// No need to check this error since we're returning
+	return indexer.Add(req)
 }
 
 func processDataobjects(log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx) error {
@@ -158,27 +160,27 @@ func processDataobjects(log *logrus.Entry, rows *rowMetadata, esDocs map[string]
 	}
 	defer dataobjects.Close()
 	for dataobjects.Next() {
-		var id, selectedJson string
-		if err = dataobjects.Scan(&id, &selectedJson); err != nil {
+		var id, selectedJSON string
+		if err = dataobjects.Scan(&id, &selectedJSON); err != nil {
 			return err
 		}
 
 		seenEsDocs[id] = true
-		classification, err := classify(id, selectedJson, esDocs)
+		classification, err := classify(id, selectedJSON, esDocs)
 		if err != nil {
 			return err
 		}
 
 		if classification == UpdateDocument {
 			log.Debugf("data-object %s, documents differ, indexing", id)
-			rows.dataobjects_updated++
+			rows.dataobjectsUpdated++
 		} else if classification == IndexDocument {
 			log.Debugf("data-object %s not in ES, indexing", id)
-			rows.dataobjects_added++
+			rows.dataobjectsAdded++
 		}
 
 		if classification == UpdateDocument || classification == IndexDocument {
-			if err = index(indexer, es.index, id, "file", selectedJson); err != nil {
+			if err = index(indexer, es.index, id, "file", selectedJSON); err != nil {
 				return err
 			}
 		}
@@ -187,7 +189,7 @@ func processDataobjects(log *logrus.Entry, rows *rowMetadata, esDocs map[string]
 		rows.dataobjects++
 	}
 
-	log.Infof("%d data-objects missing, %d data-objects to update", rows.dataobjects_added, rows.dataobjects_updated)
+	log.Infof("%d data-objects missing, %d data-objects to update", rows.dataobjectsAdded, rows.dataobjectsUpdated)
 	return nil
 }
 
@@ -198,27 +200,27 @@ func processCollections(log *logrus.Entry, rows *rowMetadata, esDocs map[string]
 	}
 	defer colls.Close()
 	for colls.Next() {
-		var id, selectedJson string
-		if err = colls.Scan(&id, &selectedJson); err != nil {
+		var id, selectedJSON string
+		if err = colls.Scan(&id, &selectedJSON); err != nil {
 			return err
 		}
 
 		seenEsDocs[id] = true
-		classification, err := classify(id, selectedJson, esDocs)
+		classification, err := classify(id, selectedJSON, esDocs)
 		if err != nil {
 			return err
 		}
 
 		if classification == UpdateDocument {
 			log.Debugf("data-object %s, documents differ, indexing", id)
-			rows.colls_updated++
+			rows.collsUpdated++
 		} else if classification == IndexDocument {
 			log.Debugf("data-object %s not in ES, indexing", id)
-			rows.colls_added++
+			rows.collsAdded++
 		}
 
 		if classification == UpdateDocument || classification == IndexDocument {
-			if err = index(indexer, es.index, id, "folder", selectedJson); err != nil {
+			if err = index(indexer, es.index, id, "folder", selectedJSON); err != nil {
 				return err
 			}
 		}
@@ -227,12 +229,12 @@ func processCollections(log *logrus.Entry, rows *rowMetadata, esDocs map[string]
 		rows.colls++
 	}
 
-	log.Infof("%d collections missing, %d collections to update", rows.colls_added, rows.colls_updated)
+	log.Infof("%d collections missing, %d collections to update", rows.collsAdded, rows.collsUpdated)
 	return nil
 }
 
 func processDeletions(log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, esDocTypes map[string]string, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection) error {
-	for id, _ := range esDocs {
+	for id := range esDocs {
 		if !seenEsDocs[id] {
 			docType, ok := esDocTypes[id]
 			if !ok {
@@ -241,10 +243,10 @@ func processDeletions(log *logrus.Entry, rows *rowMetadata, esDocs map[string]El
 			}
 			if docType == "file" {
 				log.Debugf("data-object %s not seen in ICAT, deleting", id)
-				rows.dataobjects_removed++
+				rows.dataobjectsRemoved++
 			} else if docType == "folder" {
 				log.Debugf("collection %s not seen in ICAT, deleting", id)
-				rows.colls_removed++
+				rows.collsRemoved++
 			}
 			req := elastic.NewBulkDeleteRequest().Index(es.index).Type(docType).Id(id)
 			err := indexer.Add(req)
@@ -254,9 +256,11 @@ func processDeletions(log *logrus.Entry, rows *rowMetadata, esDocs map[string]El
 		}
 	}
 
-	log.Infof("%d data-objects to delete, %d collections to delete", rows.dataobjects_removed, rows.colls_removed)
+	log.Infof("%d data-objects to delete, %d collections to delete", rows.dataobjectsRemoved, rows.collsRemoved)
 	return nil
 }
+
+// ReindexPrefix attempts to reindex a given prefix given a DB and ES connection
 func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 	// SETUP
 	var rows rowMetadata

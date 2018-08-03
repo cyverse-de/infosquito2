@@ -6,11 +6,13 @@ import (
 	"gopkg.in/olivere/elastic.v5"
 )
 
+// ESConnection wraps an elastic.Client along with an index to use
 type ESConnection struct {
 	es    *elastic.Client
 	index string
 }
 
+// SetupES initializes an ESConnection for use
 func SetupES(base, user, password, index string) (*ESConnection, error) {
 	c, err := elastic.NewClient(elastic.SetSniff(false), elastic.SetURL(base), elastic.SetBasicAuth(user, password))
 
@@ -28,10 +30,12 @@ func SetupES(base, user, password, index string) (*ESConnection, error) {
 	return &ESConnection{es: c, index: index}, nil
 }
 
+// NewBulkIndexer returns an esutils.BulkIndexer given a size and a connection
 func (es *ESConnection) NewBulkIndexer(bulkSize int) *esutils.BulkIndexer {
 	return esutils.NewBulkIndexer(es.es, bulkSize)
 }
 
+// Close stops the underlying elastic.Client
 func (es *ESConnection) Close() {
 	es.es.Stop()
 }

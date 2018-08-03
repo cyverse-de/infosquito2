@@ -4,19 +4,22 @@ import (
 	set "github.com/deckarep/golang-set"
 )
 
+// Metadatum encodes a single piece of metadata
 type Metadatum struct {
 	Attribute string `json:"attribute"`
 	Value     string `json:"value"`
 	Unit      string `json:"unit"`
 }
 
+// UserPermission encodes a single user's permission
 type UserPermission struct {
 	User       string `json:"user"`
 	Permission string `json:"permission"`
 }
 
+// ElasticsearchDocument encodes the data for an object as it should be sent to Elasticsearch
 type ElasticsearchDocument struct {
-	Id              string           `json:"id"`
+	ID              string           `json:"id"`
 	Path            string           `json:"path"`
 	Label           string           `json:"label"`
 	Creator         string           `json:"creator"`
@@ -58,6 +61,7 @@ func permsEqual(one, two []UserPermission) bool {
 	return true
 }
 
+// Equal checks if two ElasticsearchDocument values are equivalent for our purposes
 func (doc ElasticsearchDocument) Equal(other ElasticsearchDocument) bool {
 	// User-modifiable fields in rough "likelihood" order
 	if doc.DateModified != other.DateModified {
@@ -74,7 +78,7 @@ func (doc ElasticsearchDocument) Equal(other ElasticsearchDocument) bool {
 	}
 
 	// Fields which shouldn't change for the same object
-	if doc.Id != other.Id {
+	if doc.ID != other.ID {
 		return false
 	}
 	if doc.Creator != other.Creator {
