@@ -159,7 +159,10 @@ func publishPrefixMessages(prefixes []string, client *messaging.Client, del amqp
 	for _, prefix := range prefixes {
 		err := client.Publish(fmt.Sprintf("%s.%s", prefixRoutingKey, prefix), []byte{})
 		if err != nil {
-			del.Reject(!del.Redelivered)
+			rejectErr := del.Reject(!del.Redelivered)
+			if rejectErr != nil {
+				log.Error(rejectErr)
+			}
 			return err
 		}
 	}
@@ -178,7 +181,10 @@ func handlePrefix(del amqp.Delivery, db *ICATConnection, es *ESConnection, publi
 		log.Infof("Prefix %s too large, splitting", prefix)
 		return publishPrefixMessages(splitPrefix(prefix), publishClient, del)
 	} else if err != nil {
-		del.Reject(!del.Redelivered)
+		rejectErr := del.Reject(!del.Redelivered)
+		if rejectErr != nil {
+			log.Error(rejectErr)
+		}
 		return err
 	}
 
@@ -228,7 +234,10 @@ func main() {
 	}
 	defer publishClient.Close()
 
-	publishClient.SetupPublishing(amqpExchangeName)
+	err = publishClient.SetupPublishing(amqpExchangeName)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	go listenClient.Listen()
 
@@ -249,8 +258,10 @@ func main() {
 			if err != nil {
 				return
 			}
-			del.Ack(false)
-			return
+			err = del.Ack(false)
+			if err != nil {
+				log.Error(err)
+			}
 		},
 		1)
 
