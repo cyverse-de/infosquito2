@@ -40,10 +40,7 @@ func metadataEqual(one, two []Metadatum) bool {
 	for i := range two {
 		tm[i] = two[i]
 	}
-	if !set.NewSetFromSlice(om).Equal(set.NewSetFromSlice(tm)) {
-		return false
-	}
-	return true
+	return set.NewSetFromSlice(om).Equal(set.NewSetFromSlice(tm))
 }
 
 func permsEqual(one, two []UserPermission) bool {
@@ -55,10 +52,7 @@ func permsEqual(one, two []UserPermission) bool {
 	for i := range two {
 		tm[i] = two[i]
 	}
-	if !set.NewSetFromSlice(om).Equal(set.NewSetFromSlice(tm)) {
-		return false
-	}
-	return true
+	return set.NewSetFromSlice(om).Equal(set.NewSetFromSlice(tm))
 }
 
 // Equal checks if two ElasticsearchDocument values are equivalent for our purposes
