@@ -1,0 +1,6 @@
+infosquito2
+infosquito2.yml
+*.swp
+Gopkg.*
+Jenkinsfile
+service.properties
