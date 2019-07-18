@@ -88,7 +88,7 @@ func initConfig(cfgPath string) {
 	var err error
 	cfg, err = configurate.InitDefaults(cfgPath, defaultConfig)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Unable to initialize the default configuration settings: %s", err)
 	}
 
 	dbURI = cfg.GetString("db.uri")
@@ -197,12 +197,12 @@ func main() {
 
 	db, err := SetupDB(dbURI)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Unable to set up the database: %s", err)
 	}
 
 	es, err := SetupES(elasticsearchBase, elasticsearchUser, elasticsearchPassword, elasticsearchIndex)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Unable to set up the ElasticSearch connection: %s", err)
 	}
 
 	if *mode == "full" {
@@ -212,7 +212,7 @@ func main() {
 			log.Infof("Reindexing prefix %s", prefix)
 			err = tryReindexPrefix(db, es, prefix)
 			if err != nil {
-				log.Fatal(err)
+				log.Fatalf("Full reindexing failed: %s", err)
 			}
 		}
 		return
@@ -224,19 +224,19 @@ func main() {
 
 	listenClient, err := messaging.NewClient(amqpURI, true)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Unable to create the messaging listen client: %s", err)
 	}
 	defer listenClient.Close()
 
 	publishClient, err := messaging.NewClient(amqpURI, true)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Unable to create the messaging publish client: %s", err)
 	}
 	defer publishClient.Close()
 
 	err = publishClient.SetupPublishing(amqpExchangeName)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Unable to set up message publishing: %s", err)
 	}
 
 	go listenClient.Listen()
