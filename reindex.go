@@ -48,8 +48,8 @@ func logTime(prefixlog *logrus.Entry, start time.Time, rows *rowMetadata) {
 	prefixlog.Infof("Processed %d entries (%d rows, %d documents, processed %d data objects (+%d,U%d,-%d), %d colls (+%d,U%d,-%d)) in %s", rows.processed, rows.rows, rows.documents, rows.dataobjects, rows.dataobjectsAdded, rows.dataobjectsUpdated, rows.dataobjectsRemoved, rows.colls, rows.collsAdded, rows.collsUpdated, rows.collsRemoved, time.Since(start).String())
 }
 
-func createUuidsTable(log *logrus.Entry, prefix string, tx *ICATTx) (int64, error) {
-	r, err := tx.CreateTemporaryTable("object_uuids", "SELECT map.object_id as object_id, lower(meta.meta_attr_value) as id FROM r_objt_metamap map JOIN r_meta_main meta ON map.meta_id = meta.meta_id WHERE meta.meta_attr_name = 'ipc_UUID' AND meta.meta_attr_value LIKE $1 || '%'", prefix)
+func createBaseUuidsTable(log *logrus.Entry, prefix string, tx *ICATTx) (int64, error) {
+	r, err := tx.CreateTemporaryTable("base_object_uuids", "SELECT meta.meta_id, lower(meta.meta_attr_value) as id FROM r_meta_main meta WHERE meta.meta_attr_name = 'ipc_UUID' AND meta.meta_attr_value LIKE $1 || '%'", prefix)
 	if err != nil {
 		return 0, err
 	}
@@ -59,6 +59,20 @@ func createUuidsTable(log *logrus.Entry, prefix string, tx *ICATTx) (int64, erro
 	}
 
 	log.Debugf("Got %d rows for prefix %s (note that this may include stale unused metadata)", r, prefix)
+	return r, nil
+}
+
+func createUuidsTable(log *logrus.Entry, prefix string, tx *ICATTx) (int64, error) {
+	r, err := createBaseUuidsTable(log, prefix, tx);
+	if err != nil {
+		return 0, err
+	}
+
+	_, err = tx.CreateTemporaryTable("object_uuids", "SELECT map.object_id as object_id, meta.id FROM r_objt_metamap map JOIN base_object_uuids meta ON map.meta_id = meta.meta_id")
+	if err != nil {
+		return 0, err
+	}
+
 	return r, nil
 }
 
