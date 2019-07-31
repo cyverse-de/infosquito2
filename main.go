@@ -181,6 +181,7 @@ func handlePrefix(del amqp.Delivery, db *ICATConnection, es *ESConnection, publi
 		log.Infof("Prefix %s too large, splitting", prefix)
 		return publishPrefixMessages(splitPrefix(prefix), publishClient, del)
 	} else if err != nil {
+		log.Errorf("Error reindexing prefix %s: %s", prefix, err)
 		rejectErr := del.Reject(!del.Redelivered)
 		if rejectErr != nil {
 			log.Error(rejectErr)
