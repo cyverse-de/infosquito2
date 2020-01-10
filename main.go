@@ -20,6 +20,8 @@ const defaultConfig = `
 amqp:
   uri: amqp://guest:guest@rabbit:5672/
   queue_prefix: ""
+  dewey_uri: amqp://guest:guest@rabbit:5672/
+  dewey_queue: "dewey.indexing"
 
 infosquito:
   maximum_in_prefix: 10000
@@ -49,9 +51,11 @@ var (
 	cfg     *viper.Viper
 
 	amqpURI               string
+	amqpDeweyURI          string
 	amqpExchangeName      string
 	amqpExchangeType      string
 	amqpQueuePrefix       string
+	amqpDeweyQueue        string
 	elasticsearchBase     string
 	elasticsearchUser     string
 	elasticsearchPassword string
@@ -114,6 +118,9 @@ func loadAMQPConfig() {
 	amqpExchangeName = cfg.GetString("amqp.exchange.name")
 	amqpExchangeType = cfg.GetString("amqp.exchange.type")
 	amqpQueuePrefix = cfg.GetString("amqp.queue_prefix")
+
+	amqpDeweyURI = cfg.GetString("amqp.dewey_uri")
+	amqpDeweyQueue = cfg.GetString("amqp.dewey_queue")
 }
 
 func getQueueName(prefix string) string {
@@ -169,7 +176,11 @@ func publishPrefixMessages(prefixes []string, client *messaging.Client, del amqp
 	return nil
 }
 
-func handleIndex(del amqp.Delivery, publishClient *messaging.Client) error {
+func handleIndex(del amqp.Delivery, publishClient *messaging.Client, deweyClient *messaging.Client) error {
+	err := deweyClient.PurgeQueue(amqpDeweyQueue)
+	if err != nil {
+		log.Error(err)
+	}
 	return publishPrefixMessages(generatePrefixes(basePrefixLength), publishClient, del)
 }
 
@@ -240,6 +251,12 @@ func main() {
 		log.Fatalf("Unable to set up message publishing: %s", err)
 	}
 
+	deweyClient, err := messaging.NewClient(amqpDeweyURI, true)
+	if err != nil {
+		log.Fatalf("Unable to create the messaging dewey client: %s", err)
+	}
+	defer deweyClient.Close()
+
 	go listenClient.Listen()
 
 	queueName := getQueueName(amqpQueuePrefix)
@@ -252,7 +269,7 @@ func main() {
 			var err error
 			log.Infof("Got message %s", del.RoutingKey)
 			if del.RoutingKey == "index.all" || del.RoutingKey == "index.data" {
-				err = handleIndex(del, publishClient)
+				err = handleIndex(del, publishClient, deweyClient)
 			} else {
 				err = handlePrefix(del, db, es, publishClient)
 			}
