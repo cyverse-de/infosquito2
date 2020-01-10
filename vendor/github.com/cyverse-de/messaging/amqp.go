@@ -491,6 +491,17 @@ func (c *Client) DeleteQueue(name string) error {
 	return err
 }
 
+// PurgeQueue purges messages from the queue without regards to safety.
+func (c *Client) PurgeQueue(name string) error {
+	channel, err := c.connection.Channel()
+	if err != nil {
+		return err
+	}
+	defer channel.Close()
+	_, err = channel.QueuePurge(name, true)
+	return err
+}
+
 func (c *Client) initconsumer(cs *consumer) error {
 	channel, err := c.connection.Channel()
 	if err != nil {

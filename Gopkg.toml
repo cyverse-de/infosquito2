@@ -24,6 +24,9 @@
 #   go-tests = true
 #   unused-packages = true
 
+[[constraint]]
+  name = "github.com/cyverse-de/messaging"
+  version = "7"
 
 [prune]
   go-tests = true
