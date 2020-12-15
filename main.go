@@ -163,6 +163,7 @@ func tryReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error
 }
 
 func publishPrefixMessages(prefixes []string, client *messaging.Client, del amqp.Delivery) error {
+	log.Infof("Publishing %d prefix messages", len(prefixes))
 	for _, prefix := range prefixes {
 		err := client.Publish(fmt.Sprintf("%s.%s", prefixRoutingKey, prefix), []byte{})
 		if err != nil {
@@ -177,6 +178,7 @@ func publishPrefixMessages(prefixes []string, client *messaging.Client, del amqp
 }
 
 func handleIndex(del amqp.Delivery, publishClient *messaging.Client, deweyClient *messaging.Client) error {
+	log.Infof("Purging dewey queue %s", amqpDeweyQueue)
 	err := deweyClient.PurgeQueue(amqpDeweyQueue)
 	if err != nil {
 		log.Error(err)
@@ -186,7 +188,7 @@ func handleIndex(del amqp.Delivery, publishClient *messaging.Client, deweyClient
 
 func handlePrefix(del amqp.Delivery, db *ICATConnection, es *ESConnection, publishClient *messaging.Client) error {
 	prefix := del.RoutingKey[prefixRoutingKeyLen+1:]
-	log.Infof("Triggered reindexing prefix %s", prefix)
+	log.Debugf("Triggered reindexing prefix %s", prefix)
 	err := ReindexPrefix(db, es, prefix)
 	if err == ErrTooManyResults {
 		log.Infof("Prefix %s too large, splitting", prefix)
@@ -267,7 +269,7 @@ func main() {
 		[]string{"index.all", "index.data", fmt.Sprintf("%s.#", prefixRoutingKey)},
 		func(del amqp.Delivery) {
 			var err error
-			log.Infof("Got message %s", del.RoutingKey)
+			log.Debugf("Got message %s", del.RoutingKey)
 			if del.RoutingKey == "index.all" || del.RoutingKey == "index.data" {
 				err = handleIndex(del, publishClient, deweyClient)
 			} else {

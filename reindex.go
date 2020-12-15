@@ -203,7 +203,7 @@ func processDataobjects(log *logrus.Entry, rows *rowMetadata, esDocs map[string]
 		rows.dataobjects++
 	}
 
-	log.Infof("%d data-objects missing, %d data-objects to update", rows.dataobjectsAdded, rows.dataobjectsUpdated)
+	log.Debugf("%d data-objects missing, %d data-objects to update", rows.dataobjectsAdded, rows.dataobjectsUpdated)
 	return nil
 }
 
@@ -243,7 +243,7 @@ func processCollections(log *logrus.Entry, rows *rowMetadata, esDocs map[string]
 		rows.colls++
 	}
 
-	log.Infof("%d collections missing, %d collections to update", rows.collsAdded, rows.collsUpdated)
+	log.Debugf("%d collections missing, %d collections to update", rows.collsAdded, rows.collsUpdated)
 	return nil
 }
 
@@ -270,7 +270,7 @@ func processDeletions(log *logrus.Entry, rows *rowMetadata, esDocs map[string]El
 		}
 	}
 
-	log.Infof("%d data-objects to delete, %d collections to delete", rows.dataobjectsRemoved, rows.collsRemoved)
+	log.Debugf("%d data-objects to delete, %d collections to delete", rows.dataobjectsRemoved, rows.collsRemoved)
 	return nil
 }
 
@@ -282,7 +282,7 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 	prefixlog := log.WithFields(logrus.Fields{
 		"prefix": prefix,
 	})
-	prefixlog.Infof("Indexing prefix %s", prefix)
+	prefixlog.Debugf("Indexing prefix %s", prefix)
 
 	start := time.Now()
 	defer logTime(prefixlog, start, &rows)
