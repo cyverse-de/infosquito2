@@ -1,4 +1,4 @@
-FROM golang:1.11-alpine
+FROM golang:1.15-alpine
 
 RUN apk add --no-cache git
 RUN go get -u github.com/jstemmer/go-junit-report
@@ -13,7 +13,8 @@ LABEL org.cyverse.descriptive-version="$descriptive_version"
 
 COPY . /go/src/github.com/cyverse-de/infosquito2
 ENV CGO_ENABLED=0
-RUN go install -v -ldflags "-X main.appver=$version -X main.gitref=$git_commit" github.com/cyverse-de/infosquito2
+RUN cd /go/src/github.com/cyverse-de/infosquito2 && \
+    go install -v -ldflags "-X main.appver=$version -X main.gitref=$git_commit" .
 
 EXPOSE 60000
 LABEL org.label-schema.vcs-ref="$git_commit"

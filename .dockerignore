@@ -4,3 +4,5 @@ infosquito2.yml
 Gopkg.*
 Jenkinsfile
 service.properties
+
+vendor/
