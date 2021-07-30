@@ -31,7 +31,7 @@ spec:
                 path: infosquito2.yml
       containers:
       - name: infosquito2
-        image: discoenv/infosquito2
+        image: harbor.cyverse.org/de/infosquito2
         resources:
           requests:
             cpu: "1028m"

@@ -10,5 +10,5 @@ build:
   tagPolicy:
     gitCommit: {}
   artifacts:
-  - image: discoenv/infosquito2
+  - image: harbor.cyverse.org/de/infosquito2
   local: {}
