@@ -63,7 +63,7 @@ func createBaseUuidsTable(log *logrus.Entry, prefix string, tx *ICATTx) (int64, 
 }
 
 func createUuidsTable(log *logrus.Entry, prefix string, tx *ICATTx) (int64, error) {
-	r, err := createBaseUuidsTable(log, prefix, tx);
+	r, err := createBaseUuidsTable(log, prefix, tx)
 	if err != nil {
 		return 0, err
 	}
@@ -291,7 +291,13 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.tx.Rollback()
+	rb := func() {
+		err := tx.tx.Rollback()
+		if err != nil {
+			prefixlog.Debugf("Failed rolling back transaction: %s", err.Error())
+		}
+	}
+	defer rb()
 
 	// COLLECT PREREQUISITES
 	r, err := createUuidsTable(prefixlog, prefix, tx)
