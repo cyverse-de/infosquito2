@@ -167,8 +167,8 @@ func index(indexer *esutils.BulkIndexer, index, id, t, json string) error {
 	return indexer.Add(req)
 }
 
-func processDataobjects(log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx) error {
-	dataobjects, err := tx.GetDataObjects("object_uuids", "object_perms", "object_metadata")
+func processDataobjects(log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
+	dataobjects, err := tx.GetDataObjects("object_uuids", "object_perms", "object_metadata", irodsZone)
 	if err != nil {
 		return err
 	}
@@ -207,8 +207,8 @@ func processDataobjects(log *logrus.Entry, rows *rowMetadata, esDocs map[string]
 	return nil
 }
 
-func processCollections(log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx) error {
-	colls, err := tx.GetCollections("object_uuids", "object_perms", "object_metadata")
+func processCollections(log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
+	colls, err := tx.GetCollections("object_uuids", "object_perms", "object_metadata", irodsZone)
 	if err != nil {
 		return err
 	}
@@ -275,7 +275,7 @@ func processDeletions(log *logrus.Entry, rows *rowMetadata, esDocs map[string]El
 }
 
 // ReindexPrefix attempts to reindex a given prefix given a DB and ES connection
-func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
+func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix, irodsZone string) error {
 	// SETUP
 	var rows rowMetadata
 
@@ -325,11 +325,11 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
 	indexer := es.NewBulkIndexer(1000)
 	defer indexer.Flush()
 
-	if err = processDataobjects(prefixlog, &rows, esDocs, seenEsDocs, indexer, es, tx); err != nil {
+	if err = processDataobjects(prefixlog, &rows, esDocs, seenEsDocs, indexer, es, tx, irodsZone); err != nil {
 		return err
 	}
 
-	if err = processCollections(prefixlog, &rows, esDocs, seenEsDocs, indexer, es, tx); err != nil {
+	if err = processCollections(prefixlog, &rows, esDocs, seenEsDocs, indexer, es, tx, irodsZone); err != nil {
 		return err
 	}
 

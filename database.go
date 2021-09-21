@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"database/sql"
+
 	"github.com/cyverse-de/dbutil"
 
 	_ "github.com/lib/pq"
@@ -71,7 +72,7 @@ func (tx *ICATTx) CreateTemporaryTable(name string, query string, args ...interf
 }
 
 // GetDataObjects returns a sql.Rows for data objects using the temporary tables which should already be set up
-func (tx *ICATTx) GetDataObjects(uuidTable string, permsTable string, metaTable string) (*sql.Rows, error) {
+func (tx *ICATTx) GetDataObjects(uuidTable string, permsTable string, metaTable string, folderBase string) (*sql.Rows, error) {
 	query := fmt.Sprintf(`SELECT id, to_json(q.*) FROM (
 SELECT ou.id "id",
        (c.coll_name || '/' || d1.data_name) "path",
@@ -88,13 +89,13 @@ SELECT ou.id "id",
   JOIN %[1]s ou on d1.data_id = ou.object_id
   LEFT JOIN %[2]s op USING (object_id)
   LEFT JOIN %[3]s om USING (object_id)
- WHERE c.coll_name LIKE '/iplant/%%' AND d1.data_repl_num = (SELECT min(d2.data_repl_num) FROM r_data_main d2 WHERE d2.data_id = d1.data_id)) q ORDER BY id`, uuidTable, permsTable, metaTable)
+ WHERE c.coll_name LIKE '/%[4]s/%%' AND d1.data_repl_num = (SELECT min(d2.data_repl_num) FROM r_data_main d2 WHERE d2.data_id = d1.data_id)) q ORDER BY id`, uuidTable, permsTable, metaTable, folderBase)
 
 	return tx.tx.Query(query)
 }
 
 // GetCollections returns a sql.Rows for collections using the temporary tables which should already be set up
-func (tx *ICATTx) GetCollections(uuidTable string, permsTable string, metaTable string) (*sql.Rows, error) {
+func (tx *ICATTx) GetCollections(uuidTable string, permsTable string, metaTable string, folderBase string) (*sql.Rows, error) {
 	query := fmt.Sprintf(`SELECT id, to_json(q.*) FROM (
 SELECT ou.id "id",
        coll_name "path",
@@ -110,7 +111,7 @@ SELECT ou.id "id",
   JOIN %[1]s ou on coll_id = ou.object_id
   LEFT JOIN %[2]s op USING (object_id)
   LEFT JOIN %[3]s om USING (object_id)
- WHERE coll_name LIKE '/iplant/%%' and coll_type = '') q ORDER BY id`, uuidTable, permsTable, metaTable)
+ WHERE coll_name LIKE '/%[4]s/%%' and coll_type = '') q ORDER BY id`, uuidTable, permsTable, metaTable, folderBase)
 
 	return tx.tx.Query(query)
 }

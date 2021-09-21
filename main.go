@@ -23,6 +23,9 @@ amqp:
   dewey_uri: amqp://guest:guest@rabbit:5672/
   dewey_queue: "dewey.indexing"
 
+irods:
+  zone: iplant
+
 infosquito:
   maximum_in_prefix: 10000
   base_prefix_length: 3
@@ -60,6 +63,7 @@ var (
 	elasticsearchUser     string
 	elasticsearchPassword string
 	elasticsearchIndex    string
+	irodsZone             string
 	dbURI                 string
 	maxInPrefix           int
 	basePrefixLength      int
@@ -100,6 +104,7 @@ func initConfig(cfgPath string) {
 	elasticsearchUser = cfg.GetString("elasticsearch.user")
 	elasticsearchPassword = cfg.GetString("elasticsearch.password")
 	elasticsearchIndex = cfg.GetString("elasticsearch.index")
+	irodsZone = cfg.GetString("irods.zone")
 	max, err := strconv.Atoi(cfg.GetString("infosquito.maximum_in_prefix"))
 	if err != nil {
 		log.Fatal("Couldn't parse integer out of infosquito.maximum_in_prefix")
@@ -147,11 +152,11 @@ func splitPrefix(prefix string) []string {
 	return res
 }
 
-func tryReindexPrefix(db *ICATConnection, es *ESConnection, prefix string) error {
-	err := ReindexPrefix(db, es, prefix)
+func tryReindexPrefix(db *ICATConnection, es *ESConnection, prefix, irodsZone string) error {
+	err := ReindexPrefix(db, es, prefix, irodsZone)
 	if err == ErrTooManyResults {
 		for _, newprefix := range splitPrefix(prefix) {
-			err = tryReindexPrefix(db, es, newprefix)
+			err = tryReindexPrefix(db, es, newprefix, irodsZone)
 			if err != nil {
 				return err
 			}
@@ -189,7 +194,7 @@ func handleIndex(del amqp.Delivery, publishClient *messaging.Client, deweyClient
 func handlePrefix(del amqp.Delivery, db *ICATConnection, es *ESConnection, publishClient *messaging.Client) error {
 	prefix := del.RoutingKey[prefixRoutingKeyLen+1:]
 	log.Debugf("Triggered reindexing prefix %s", prefix)
-	err := ReindexPrefix(db, es, prefix)
+	err := ReindexPrefix(db, es, prefix, irodsZone)
 	if err == ErrTooManyResults {
 		log.Infof("Prefix %s too large, splitting", prefix)
 		return publishPrefixMessages(splitPrefix(prefix), publishClient, del)
@@ -224,7 +229,7 @@ func main() {
 		// do full mode
 		for _, prefix := range generatePrefixes(basePrefixLength) {
 			log.Infof("Reindexing prefix %s", prefix)
-			err = tryReindexPrefix(db, es, prefix)
+			err = tryReindexPrefix(db, es, prefix, irodsZone)
 			if err != nil {
 				log.Fatalf("Full reindexing failed: %s", err)
 			}
