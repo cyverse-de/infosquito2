@@ -287,13 +287,20 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix, irodsZone strin
 	start := time.Now()
 	defer logTime(prefixlog, start, &rows)
 
-	tx, err := db.BeginTx(context.TODO(), nil)
+	seenEsDocs := make(map[string]bool)
+	docs, esDocs, esDocTypes, err := getSearchResults(prefixlog, prefix, es)
+	rows.documents = docs
+	if err != nil {
+		return err
+	}
+
+	tx, err := db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return err
 	}
 	rb := func() {
 		err := tx.tx.Rollback()
-		if err != nil {
+		if err != nil && err.Error() != "sql: transaction has already been committed or rolled back" {
 			prefixlog.Debugf("Failed rolling back transaction: %s", err.Error())
 		}
 	}
@@ -302,13 +309,6 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix, irodsZone strin
 	// COLLECT PREREQUISITES
 	r, err := createUuidsTable(prefixlog, prefix, tx)
 	rows.rows = r
-	if err != nil {
-		return err
-	}
-
-	seenEsDocs := make(map[string]bool)
-	docs, esDocs, esDocTypes, err := getSearchResults(prefixlog, prefix, es)
-	rows.documents = docs
 	if err != nil {
 		return err
 	}
@@ -332,6 +332,8 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix, irodsZone strin
 	if err = processCollections(prefixlog, &rows, esDocs, seenEsDocs, indexer, es, tx, irodsZone); err != nil {
 		return err
 	}
+
+	rb() // Roll back tx as early as possible
 
 	if err = processDeletions(prefixlog, &rows, esDocs, esDocTypes, seenEsDocs, indexer, es); err != nil {
 		return err
