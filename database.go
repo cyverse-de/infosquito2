@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"database/sql"
 
@@ -38,8 +39,11 @@ func SetupDB(dbURI string) (*ICATConnection, error) {
 	if err = db.Ping(); err != nil {
 		return nil, err
 	}
-
 	log.Info("Successfully pinged the database")
+
+	db.SetMaxOpenConns(10)
+	db.SetConnMaxIdleTime(time.Minute)
+
 	return &ICATConnection{db: db}, nil
 }
 
@@ -49,6 +53,9 @@ func (d *ICATConnection) BeginTx(ctx context.Context, opts *sql.TxOptions) (*ICA
 	if err != nil {
 		return nil, err
 	}
+
+	stats := d.db.Stats()
+	log.Infof("ICAT stats: %d/%d open; %d/%d used/idle", stats.OpenConnections, stats.MaxOpenConnections, stats.InUse, stats.Idle)
 	return &ICATTx{tx: tx}, nil
 }
 
