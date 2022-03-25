@@ -25,6 +25,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
 )
 
+const otelName = "github.com/cyverse-de/infosquito2"
 const defaultConfig = `
 amqp:
   uri: amqp://guest:guest@rabbit:5672/
@@ -163,11 +164,11 @@ func splitPrefix(prefix string) []string {
 	return res
 }
 
-func tryReindexPrefix(db *ICATConnection, es *ESConnection, prefix, irodsZone string) error {
-	err := ReindexPrefix(db, es, prefix, irodsZone)
+func tryReindexPrefix(context context.Context, db *ICATConnection, es *ESConnection, prefix, irodsZone string) error {
+	err := ReindexPrefix(context, db, es, prefix, irodsZone)
 	if err == ErrTooManyResults {
 		for _, newprefix := range splitPrefix(prefix) {
-			err = tryReindexPrefix(db, es, newprefix, irodsZone)
+			err = tryReindexPrefix(context, db, es, newprefix, irodsZone)
 			if err != nil {
 				return err
 			}
@@ -194,21 +195,27 @@ func publishPrefixMessages(context context.Context, prefixes []string, client *m
 }
 
 func handleIndex(context context.Context, del amqp.Delivery, publishClient *messaging.Client, deweyClient *messaging.Client) error {
+	ctx, span := otel.Tracer(otelName).Start(context, "handleIndex")
+	defer span.End()
+
 	log.Infof("Purging dewey queue %s", amqpDeweyQueue)
 	err := deweyClient.PurgeQueue(amqpDeweyQueue)
 	if err != nil {
 		log.Error(err)
 	}
-	return publishPrefixMessages(context, generatePrefixes(basePrefixLength), publishClient, del)
+	return publishPrefixMessages(ctx, generatePrefixes(basePrefixLength), publishClient, del)
 }
 
 func handlePrefix(context context.Context, del amqp.Delivery, db *ICATConnection, es *ESConnection, publishClient *messaging.Client) error {
+	ctx, span := otel.Tracer(otelName).Start(context, "handlePrefix")
+	defer span.End()
+
 	prefix := del.RoutingKey[prefixRoutingKeyLen+1:]
 	log.Debugf("Triggered reindexing prefix %s", prefix)
-	err := ReindexPrefix(db, es, prefix, irodsZone)
+	err := ReindexPrefix(ctx, db, es, prefix, irodsZone)
 	if err == ErrTooManyResults {
 		log.Infof("Prefix %s too large, splitting", prefix)
-		return publishPrefixMessages(context, splitPrefix(prefix), publishClient, del)
+		return publishPrefixMessages(ctx, splitPrefix(prefix), publishClient, del)
 	} else if err != nil {
 		log.Errorf("Error reindexing prefix %s: %s", prefix, err)
 		rejectErr := del.Reject(!del.Redelivered)
@@ -288,7 +295,7 @@ func main() {
 		// do full mode
 		for _, prefix := range generatePrefixes(basePrefixLength) {
 			log.Infof("Reindexing prefix %s", prefix)
-			err = tryReindexPrefix(db, es, prefix, irodsZone)
+			err = tryReindexPrefix(context.Background(), db, es, prefix, irodsZone)
 			if err != nil {
 				log.Fatalf("Full reindexing failed: %s", err)
 			}

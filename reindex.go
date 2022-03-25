@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel"
 
 	"github.com/cyverse-de/esutils"
 	"github.com/sirupsen/logrus"
@@ -48,7 +49,11 @@ func logTime(prefixlog *logrus.Entry, start time.Time, rows *rowMetadata) {
 	prefixlog.Infof("Processed %d entries (%d rows, %d documents, processed %d data objects (+%d,U%d,-%d), %d colls (+%d,U%d,-%d)) in %s", rows.processed, rows.rows, rows.documents, rows.dataobjects, rows.dataobjectsAdded, rows.dataobjectsUpdated, rows.dataobjectsRemoved, rows.colls, rows.collsAdded, rows.collsUpdated, rows.collsRemoved, time.Since(start).String())
 }
 
-func createBaseUuidsTable(log *logrus.Entry, prefix string, tx *ICATTx) (int64, error) {
+func createBaseUuidsTable(context context.Context, log *logrus.Entry, prefix string, tx *ICATTx) (int64, error) {
+	//ctx, span := otel.Tracer(otelName).Start(context, "createBaseUuidsTable")
+	_, span := otel.Tracer(otelName).Start(context, "createBaseUuidsTable")
+	defer span.End()
+
 	r, err := tx.CreateTemporaryTable("base_object_uuids", "SELECT meta.meta_id, lower(meta.meta_attr_value) as id FROM r_meta_main meta WHERE meta.meta_attr_name = 'ipc_UUID' AND meta.meta_attr_value LIKE $1 || '%'", prefix)
 	if err != nil {
 		return 0, err
@@ -62,8 +67,11 @@ func createBaseUuidsTable(log *logrus.Entry, prefix string, tx *ICATTx) (int64, 
 	return r, nil
 }
 
-func createUuidsTable(log *logrus.Entry, prefix string, tx *ICATTx) (int64, error) {
-	r, err := createBaseUuidsTable(log, prefix, tx)
+func createUuidsTable(context context.Context, log *logrus.Entry, prefix string, tx *ICATTx) (int64, error) {
+	ctx, span := otel.Tracer(otelName).Start(context, "createUuidsTable")
+	defer span.End()
+
+	r, err := createBaseUuidsTable(ctx, log, prefix, tx)
 	if err != nil {
 		return 0, err
 	}
@@ -76,7 +84,11 @@ func createUuidsTable(log *logrus.Entry, prefix string, tx *ICATTx) (int64, erro
 	return r, nil
 }
 
-func createPermsTable(log *logrus.Entry, tx *ICATTx) error {
+func createPermsTable(context context.Context, log *logrus.Entry, tx *ICATTx) error {
+	//ctx, span := otel.Tracer(otelName).Start(context, "createPermsTable")
+	_, span := otel.Tracer(otelName).Start(context, "createPermsTable")
+	defer span.End()
+
 	r, err := tx.CreateTemporaryTable("object_perms", `select object_id, json_agg(format('{"user": %s, "permission": %s}', to_json(u.user_name || '#' || u.zone_name), (
                                  CASE a.access_type_id
                                    WHEN 1050 THEN to_json('read'::text)
@@ -92,7 +104,11 @@ func createPermsTable(log *logrus.Entry, tx *ICATTx) error {
 	return nil
 }
 
-func createMetadataTable(log *logrus.Entry, tx *ICATTx) error {
+func createMetadataTable(context context.Context, log *logrus.Entry, tx *ICATTx) error {
+	//ctx, span := otel.Tracer(otelName).Start(context, "createMetadataTable")
+	_, span := otel.Tracer(otelName).Start(context, "createMetadataTable")
+	defer span.End()
+
 	r, err := tx.CreateTemporaryTable("object_metadata", `select object_id, json_agg(format('{"attribute": %s, "value": %s, "unit": %s}',
                         coalesce(to_json(m2.meta_attr_name), 'null'::json),
                         coalesce(to_json(m2.meta_attr_value), 'null'::json),
@@ -106,14 +122,17 @@ func createMetadataTable(log *logrus.Entry, tx *ICATTx) error {
 	return nil
 }
 
-func getSearchResults(log *logrus.Entry, prefix string, es *ESConnection) (int64, map[string]ElasticsearchDocument, map[string]string, error) {
+func getSearchResults(context context.Context, log *logrus.Entry, prefix string, es *ESConnection) (int64, map[string]ElasticsearchDocument, map[string]string, error) {
+	ctx, span := otel.Tracer(otelName).Start(context, "getSearchResults")
+	defer span.End()
+
 	esDocs := make(map[string]ElasticsearchDocument)
 	esDocTypes := make(map[string]string)
 
 	prefixQuery := elastic.NewBoolQuery().MinimumNumberShouldMatch(1).Should(elastic.NewPrefixQuery("id", strings.ToUpper(prefix)), elastic.NewPrefixQuery("id", strings.ToLower(prefix)))
 
 	searchService := es.es.Search(es.index).Type("file", "folder").Query(prefixQuery).Sort("id", true).Size(maxInPrefix)
-	search, err := searchService.Do(context.TODO())
+	search, err := searchService.Do(ctx)
 	if err != nil {
 		return 0, nil, nil, err
 	}
@@ -167,7 +186,11 @@ func index(indexer *esutils.BulkIndexer, index, id, t, json string) error {
 	return indexer.Add(req)
 }
 
-func processDataobjects(log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
+func processDataobjects(context context.Context, log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
+	//ctx, span := otel.Tracer(otelName).Start(context, "processDataobjects")
+	_, span := otel.Tracer(otelName).Start(context, "processDataobjects")
+	defer span.End()
+
 	dataobjects, err := tx.GetDataObjects("object_uuids", "object_perms", "object_metadata", irodsZone)
 	if err != nil {
 		return err
@@ -207,7 +230,11 @@ func processDataobjects(log *logrus.Entry, rows *rowMetadata, esDocs map[string]
 	return nil
 }
 
-func processCollections(log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
+func processCollections(context context.Context, log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
+	//ctx, span := otel.Tracer(otelName).Start(context, "processCollections")
+	_, span := otel.Tracer(otelName).Start(context, "processCollections")
+	defer span.End()
+
 	colls, err := tx.GetCollections("object_uuids", "object_perms", "object_metadata", irodsZone)
 	if err != nil {
 		return err
@@ -247,7 +274,11 @@ func processCollections(log *logrus.Entry, rows *rowMetadata, esDocs map[string]
 	return nil
 }
 
-func processDeletions(log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, esDocTypes map[string]string, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection) error {
+func processDeletions(context context.Context, log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, esDocTypes map[string]string, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection) error {
+	//ctx, span := otel.Tracer(otelName).Start(context, "processDeletions")
+	_, span := otel.Tracer(otelName).Start(context, "processDeletions")
+	defer span.End()
+
 	for id := range esDocs {
 		if !seenEsDocs[id] {
 			docType, ok := esDocTypes[id]
@@ -275,7 +306,10 @@ func processDeletions(log *logrus.Entry, rows *rowMetadata, esDocs map[string]El
 }
 
 // ReindexPrefix attempts to reindex a given prefix given a DB and ES connection
-func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix, irodsZone string) error {
+func ReindexPrefix(context context.Context, db *ICATConnection, es *ESConnection, prefix, irodsZone string) error {
+	ctx, span := otel.Tracer(otelName).Start(context, "ReindexPrefix")
+	defer span.End()
+
 	// SETUP
 	var rows rowMetadata
 
@@ -288,13 +322,13 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix, irodsZone strin
 	defer logTime(prefixlog, start, &rows)
 
 	seenEsDocs := make(map[string]bool)
-	docs, esDocs, esDocTypes, err := getSearchResults(prefixlog, prefix, es)
+	docs, esDocs, esDocTypes, err := getSearchResults(ctx, prefixlog, prefix, es)
 	rows.documents = docs
 	if err != nil {
 		return err
 	}
 
-	tx, err := db.BeginTx(context.Background(), nil)
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -307,17 +341,17 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix, irodsZone strin
 	defer rb()
 
 	// COLLECT PREREQUISITES
-	r, err := createUuidsTable(prefixlog, prefix, tx)
+	r, err := createUuidsTable(ctx, prefixlog, prefix, tx)
 	rows.rows = r
 	if err != nil {
 		return err
 	}
 
-	if err = createPermsTable(prefixlog, tx); err != nil {
+	if err = createPermsTable(ctx, prefixlog, tx); err != nil {
 		return err
 	}
 
-	if err = createMetadataTable(prefixlog, tx); err != nil {
+	if err = createMetadataTable(ctx, prefixlog, tx); err != nil {
 		return err
 	}
 
@@ -325,17 +359,17 @@ func ReindexPrefix(db *ICATConnection, es *ESConnection, prefix, irodsZone strin
 	indexer := es.NewBulkIndexer(1000)
 	defer indexer.Flush()
 
-	if err = processDataobjects(prefixlog, &rows, esDocs, seenEsDocs, indexer, es, tx, irodsZone); err != nil {
+	if err = processDataobjects(ctx, prefixlog, &rows, esDocs, seenEsDocs, indexer, es, tx, irodsZone); err != nil {
 		return err
 	}
 
-	if err = processCollections(prefixlog, &rows, esDocs, seenEsDocs, indexer, es, tx, irodsZone); err != nil {
+	if err = processCollections(ctx, prefixlog, &rows, esDocs, seenEsDocs, indexer, es, tx, irodsZone); err != nil {
 		return err
 	}
 
 	rb() // Roll back tx as early as possible
 
-	if err = processDeletions(prefixlog, &rows, esDocs, esDocTypes, seenEsDocs, indexer, es); err != nil {
+	if err = processDeletions(ctx, prefixlog, &rows, esDocs, esDocTypes, seenEsDocs, indexer, es); err != nil {
 		return err
 	}
 
