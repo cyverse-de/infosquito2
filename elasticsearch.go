@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+
 	"github.com/cyverse-de/esutils"
 	"github.com/pkg/errors"
 	"gopkg.in/olivere/elastic.v5"
@@ -31,8 +33,8 @@ func SetupES(base, user, password, index string) (*ESConnection, error) {
 }
 
 // NewBulkIndexer returns an esutils.BulkIndexer given a size and a connection
-func (es *ESConnection) NewBulkIndexer(bulkSize int) *esutils.BulkIndexer {
-	return esutils.NewBulkIndexer(es.es, bulkSize)
+func (es *ESConnection) NewBulkIndexer(context context.Context, bulkSize int) *esutils.BulkIndexer {
+	return esutils.NewBulkIndexerContext(context, es.es, bulkSize)
 }
 
 // Close stops the underlying elastic.Client

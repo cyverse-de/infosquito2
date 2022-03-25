@@ -356,7 +356,7 @@ func ReindexPrefix(context context.Context, db *ICATConnection, es *ESConnection
 	}
 
 	// PROCESS
-	indexer := es.NewBulkIndexer(1000)
+	indexer := es.NewBulkIndexer(ctx, 1000)
 	defer indexer.Flush()
 
 	if err = processDataobjects(ctx, prefixlog, &rows, esDocs, seenEsDocs, indexer, es, tx, irodsZone); err != nil {
