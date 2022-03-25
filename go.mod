@@ -7,7 +7,7 @@ require (
 	github.com/cyverse-de/configurate v0.0.0-20180510193728-31a2137ff467
 	github.com/cyverse-de/dbutil v0.0.0-20160615220802-d6ccc51d67cd
 	github.com/cyverse-de/esutils v0.0.0-20180717194005-d4c3a954cea5
-	github.com/cyverse-de/messaging v6.0.1-0.20200110203527-bd3ba84fc2d2+incompatible
+	github.com/cyverse-de/messaging/v9 v9.0.1
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/deckarep/golang-set v0.0.0-20171013212420-1d4478f51bed
 	github.com/fortytw2/leaktest v1.3.0 // indirect
@@ -26,8 +26,10 @@ require (
 	github.com/spf13/jwalterweatherman v0.0.0-20180109140146-7c0cea34c8ec // indirect
 	github.com/spf13/pflag v1.0.1 // indirect
 	github.com/spf13/viper v1.0.2
-	github.com/streadway/amqp v0.0.0-20180528204448-e5adc2ada8b8
-	github.com/stretchr/testify v1.6.1 // indirect
+	github.com/streadway/amqp v1.0.1-0.20200716223359-e6b33f460591
+	go.opentelemetry.io/otel v1.6.0
+	go.opentelemetry.io/otel/exporters/jaeger v1.6.0
+	go.opentelemetry.io/otel/sdk v1.6.0
 	gopkg.in/airbrake/gobrake.v2 v2.0.9 // indirect
 	gopkg.in/gemnasium/logrus-airbrake-hook.v2 v2.1.2 // indirect
 	gopkg.in/olivere/elastic.v5 v5.0.70

@@ -1,19 +1,28 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"math"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
 	"github.com/cyverse-de/configurate"
 	"github.com/spf13/viper"
 
-	"github.com/cyverse-de/messaging"
+	"github.com/cyverse-de/messaging/v9"
 	"github.com/streadway/amqp"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/jaeger"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	tracesdk "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
 )
 
 const defaultConfig = `
@@ -67,6 +76,8 @@ var (
 	dbURI                 string
 	maxInPrefix           int
 	basePrefixLength      int
+
+	tracerProvider *tracesdk.TracerProvider
 )
 
 func init() {
@@ -167,10 +178,10 @@ func tryReindexPrefix(db *ICATConnection, es *ESConnection, prefix, irodsZone st
 	return nil
 }
 
-func publishPrefixMessages(prefixes []string, client *messaging.Client, del amqp.Delivery) error {
+func publishPrefixMessages(context context.Context, prefixes []string, client *messaging.Client, del amqp.Delivery) error {
 	log.Infof("Publishing %d prefix messages", len(prefixes))
 	for _, prefix := range prefixes {
-		err := client.Publish(fmt.Sprintf("%s.%s", prefixRoutingKey, prefix), []byte{})
+		err := client.PublishContext(context, fmt.Sprintf("%s.%s", prefixRoutingKey, prefix), []byte{})
 		if err != nil {
 			rejectErr := del.Reject(!del.Redelivered)
 			if rejectErr != nil {
@@ -182,22 +193,22 @@ func publishPrefixMessages(prefixes []string, client *messaging.Client, del amqp
 	return nil
 }
 
-func handleIndex(del amqp.Delivery, publishClient *messaging.Client, deweyClient *messaging.Client) error {
+func handleIndex(context context.Context, del amqp.Delivery, publishClient *messaging.Client, deweyClient *messaging.Client) error {
 	log.Infof("Purging dewey queue %s", amqpDeweyQueue)
 	err := deweyClient.PurgeQueue(amqpDeweyQueue)
 	if err != nil {
 		log.Error(err)
 	}
-	return publishPrefixMessages(generatePrefixes(basePrefixLength), publishClient, del)
+	return publishPrefixMessages(context, generatePrefixes(basePrefixLength), publishClient, del)
 }
 
-func handlePrefix(del amqp.Delivery, db *ICATConnection, es *ESConnection, publishClient *messaging.Client) error {
+func handlePrefix(context context.Context, del amqp.Delivery, db *ICATConnection, es *ESConnection, publishClient *messaging.Client) error {
 	prefix := del.RoutingKey[prefixRoutingKeyLen+1:]
 	log.Debugf("Triggered reindexing prefix %s", prefix)
 	err := ReindexPrefix(db, es, prefix, irodsZone)
 	if err == ErrTooManyResults {
 		log.Infof("Prefix %s too large, splitting", prefix)
-		return publishPrefixMessages(splitPrefix(prefix), publishClient, del)
+		return publishPrefixMessages(context, splitPrefix(prefix), publishClient, del)
 	} else if err != nil {
 		log.Errorf("Error reindexing prefix %s: %s", prefix, err)
 		rejectErr := del.Reject(!del.Redelivered)
@@ -210,9 +221,57 @@ func handlePrefix(del amqp.Delivery, db *ICATConnection, es *ESConnection, publi
 	return nil
 }
 
+func jaegerTracerProvider(url string) (*tracesdk.TracerProvider, error) {
+	// Create the Jaeger exporter
+	exp, err := jaeger.New(jaeger.WithCollectorEndpoint(jaeger.WithEndpoint(url)))
+	if err != nil {
+		return nil, err
+	}
+
+	tp := tracesdk.NewTracerProvider(
+		tracesdk.WithBatcher(exp),
+		tracesdk.WithResource(resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceNameKey.String("data-usage-api"),
+		)),
+	)
+
+	return tp, nil
+}
+
 func main() {
+
 	checkMode()
 	initConfig(*cfgPath)
+
+	otelTracesExporter := os.Getenv("OTEL_TRACES_EXPORTER")
+	if otelTracesExporter == "jaeger" {
+		jaegerEndpoint := os.Getenv("OTEL_EXPORTER_JAEGER_ENDPOINT")
+		if jaegerEndpoint == "" {
+			log.Warn("Jaeger set as OpenTelemetry trace exporter, but no Jaeger endpoint configured.")
+		} else {
+			tp, err := jaegerTracerProvider(jaegerEndpoint)
+			if err != nil {
+				log.Fatal(err)
+			}
+			tracerProvider = tp
+			otel.SetTracerProvider(tp)
+			otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+		}
+	}
+
+	if tracerProvider != nil {
+		tracerCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		defer func(tracerContext context.Context) {
+			ctx, cancel := context.WithTimeout(tracerContext, time.Second*5)
+			defer cancel()
+			if err := tracerProvider.Shutdown(ctx); err != nil {
+				log.Fatal(err)
+			}
+		}(tracerCtx)
+	}
 
 	db, err := SetupDB(dbURI)
 	if err != nil {
@@ -272,13 +331,13 @@ func main() {
 		amqpExchangeType,
 		queueName,
 		[]string{"index.all", "index.data", fmt.Sprintf("%s.#", prefixRoutingKey)},
-		func(del amqp.Delivery) {
+		func(context context.Context, del amqp.Delivery) {
 			var err error
 			log.Debugf("Got message %s", del.RoutingKey)
 			if del.RoutingKey == "index.all" || del.RoutingKey == "index.data" {
-				err = handleIndex(del, publishClient, deweyClient)
+				err = handleIndex(context, del, publishClient, deweyClient)
 			} else {
-				err = handlePrefix(del, db, es, publishClient)
+				err = handlePrefix(context, del, db, es, publishClient)
 			}
 			if err != nil {
 				return
