@@ -4,7 +4,7 @@ go 1.15
 
 require (
 	github.com/cyverse-de/configurate v0.0.0-20180510193728-31a2137ff467
-	github.com/cyverse-de/dbutil v0.0.0-20160615220802-d6ccc51d67cd
+	github.com/cyverse-de/dbutil v1.0.0
 	github.com/cyverse-de/esutils v1.0.1
 	github.com/cyverse-de/messaging/v9 v9.0.1
 	github.com/deckarep/golang-set v0.0.0-20171013212420-1d4478f51bed
@@ -23,7 +23,7 @@ require (
 	github.com/spf13/pflag v1.0.1 // indirect
 	github.com/spf13/viper v1.0.2
 	github.com/streadway/amqp v1.0.1-0.20200716223359-e6b33f460591
-	go.opentelemetry.io/otel v1.6.0
+	go.opentelemetry.io/otel v1.6.1
 	go.opentelemetry.io/otel/exporters/jaeger v1.6.0
 	go.opentelemetry.io/otel/sdk v1.6.0
 	gopkg.in/airbrake/gobrake.v2 v2.0.9 // indirect

@@ -50,11 +50,10 @@ func logTime(prefixlog *logrus.Entry, start time.Time, rows *rowMetadata) {
 }
 
 func createBaseUuidsTable(context context.Context, log *logrus.Entry, prefix string, tx *ICATTx) (int64, error) {
-	//ctx, span := otel.Tracer(otelName).Start(context, "createBaseUuidsTable")
-	_, span := otel.Tracer(otelName).Start(context, "createBaseUuidsTable")
+	ctx, span := otel.Tracer(otelName).Start(context, "createBaseUuidsTable")
 	defer span.End()
 
-	r, err := tx.CreateTemporaryTable("base_object_uuids", "SELECT meta.meta_id, lower(meta.meta_attr_value) as id FROM r_meta_main meta WHERE meta.meta_attr_name = 'ipc_UUID' AND meta.meta_attr_value LIKE $1 || '%'", prefix)
+	r, err := tx.CreateTemporaryTable(ctx, "base_object_uuids", "SELECT meta.meta_id, lower(meta.meta_attr_value) as id FROM r_meta_main meta WHERE meta.meta_attr_name = 'ipc_UUID' AND meta.meta_attr_value LIKE $1 || '%'", prefix)
 	if err != nil {
 		return 0, err
 	}
@@ -76,7 +75,7 @@ func createUuidsTable(context context.Context, log *logrus.Entry, prefix string,
 		return 0, err
 	}
 
-	_, err = tx.CreateTemporaryTable("object_uuids", "SELECT map.object_id as object_id, meta.id FROM r_objt_metamap map JOIN base_object_uuids meta ON map.meta_id = meta.meta_id")
+	_, err = tx.CreateTemporaryTable(ctx, "object_uuids", "SELECT map.object_id as object_id, meta.id FROM r_objt_metamap map JOIN base_object_uuids meta ON map.meta_id = meta.meta_id")
 	if err != nil {
 		return 0, err
 	}
@@ -85,11 +84,10 @@ func createUuidsTable(context context.Context, log *logrus.Entry, prefix string,
 }
 
 func createPermsTable(context context.Context, log *logrus.Entry, tx *ICATTx) error {
-	//ctx, span := otel.Tracer(otelName).Start(context, "createPermsTable")
-	_, span := otel.Tracer(otelName).Start(context, "createPermsTable")
+	ctx, span := otel.Tracer(otelName).Start(context, "createPermsTable")
 	defer span.End()
 
-	r, err := tx.CreateTemporaryTable("object_perms", `select object_id, json_agg(format('{"user": %s, "permission": %s}', to_json(u.user_name || '#' || u.zone_name), (
+	r, err := tx.CreateTemporaryTable(ctx, "object_perms", `select object_id, json_agg(format('{"user": %s, "permission": %s}', to_json(u.user_name || '#' || u.zone_name), (
                                  CASE a.access_type_id
                                    WHEN 1050 THEN to_json('read'::text)
                                    WHEN 1120 THEN to_json('write'::text)
@@ -105,11 +103,10 @@ func createPermsTable(context context.Context, log *logrus.Entry, tx *ICATTx) er
 }
 
 func createMetadataTable(context context.Context, log *logrus.Entry, tx *ICATTx) error {
-	//ctx, span := otel.Tracer(otelName).Start(context, "createMetadataTable")
-	_, span := otel.Tracer(otelName).Start(context, "createMetadataTable")
+	ctx, span := otel.Tracer(otelName).Start(context, "createMetadataTable")
 	defer span.End()
 
-	r, err := tx.CreateTemporaryTable("object_metadata", `select object_id, json_agg(format('{"attribute": %s, "value": %s, "unit": %s}',
+	r, err := tx.CreateTemporaryTable(ctx, "object_metadata", `select object_id, json_agg(format('{"attribute": %s, "value": %s, "unit": %s}',
                         coalesce(to_json(m2.meta_attr_name), 'null'::json),
                         coalesce(to_json(m2.meta_attr_value), 'null'::json),
                         coalesce(to_json(m2.meta_attr_unit), 'null'::json))::json ORDER BY meta_attr_name, meta_attr_value, meta_attr_unit)
@@ -187,11 +184,10 @@ func index(indexer *esutils.BulkIndexer, index, id, t, json string) error {
 }
 
 func processDataobjects(context context.Context, log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
-	//ctx, span := otel.Tracer(otelName).Start(context, "processDataobjects")
-	_, span := otel.Tracer(otelName).Start(context, "processDataobjects")
+	ctx, span := otel.Tracer(otelName).Start(context, "processDataobjects")
 	defer span.End()
 
-	dataobjects, err := tx.GetDataObjects("object_uuids", "object_perms", "object_metadata", irodsZone)
+	dataobjects, err := tx.GetDataObjects(ctx, "object_uuids", "object_perms", "object_metadata", irodsZone)
 	if err != nil {
 		return err
 	}
@@ -231,11 +227,10 @@ func processDataobjects(context context.Context, log *logrus.Entry, rows *rowMet
 }
 
 func processCollections(context context.Context, log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
-	//ctx, span := otel.Tracer(otelName).Start(context, "processCollections")
-	_, span := otel.Tracer(otelName).Start(context, "processCollections")
+	ctx, span := otel.Tracer(otelName).Start(context, "processCollections")
 	defer span.End()
 
-	colls, err := tx.GetCollections("object_uuids", "object_perms", "object_metadata", irodsZone)
+	colls, err := tx.GetCollections(ctx, "object_uuids", "object_perms", "object_metadata", irodsZone)
 	if err != nil {
 		return err
 	}

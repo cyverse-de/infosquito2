@@ -60,8 +60,8 @@ func (d *ICATConnection) BeginTx(ctx context.Context, opts *sql.TxOptions) (*ICA
 }
 
 // CreateTemporaryTable creates a temporary table set to ON COMMIT DROP for the given name and query on the given ICATTx
-func (tx *ICATTx) CreateTemporaryTable(name string, query string, args ...interface{}) (int64, error) {
-	res, err := tx.tx.Exec(fmt.Sprintf("CREATE TEMPORARY TABLE %s ON COMMIT DROP AS %s", name, query), args...)
+func (tx *ICATTx) CreateTemporaryTable(ctx context.Context, name string, query string, args ...interface{}) (int64, error) {
+	res, err := tx.tx.ExecContext(ctx, fmt.Sprintf("CREATE TEMPORARY TABLE %s ON COMMIT DROP AS %s", name, query), args...)
 	if err != nil {
 		return 0, err
 	}
@@ -70,7 +70,7 @@ func (tx *ICATTx) CreateTemporaryTable(name string, query string, args ...interf
 		return 0, err
 	}
 
-	_, err = tx.tx.Exec(fmt.Sprintf("ANALYZE %s", name))
+	_, err = tx.tx.ExecContext(ctx, fmt.Sprintf("ANALYZE %s", name))
 	if err != nil {
 		return 0, err
 	}
@@ -79,7 +79,7 @@ func (tx *ICATTx) CreateTemporaryTable(name string, query string, args ...interf
 }
 
 // GetDataObjects returns a sql.Rows for data objects using the temporary tables which should already be set up
-func (tx *ICATTx) GetDataObjects(uuidTable string, permsTable string, metaTable string, folderBase string) (*sql.Rows, error) {
+func (tx *ICATTx) GetDataObjects(ctx context.Context, uuidTable string, permsTable string, metaTable string, folderBase string) (*sql.Rows, error) {
 	query := fmt.Sprintf(`SELECT id, to_json(q.*) FROM (
 SELECT ou.id "id",
        (c.coll_name || '/' || d1.data_name) "path",
@@ -98,11 +98,11 @@ SELECT ou.id "id",
   LEFT JOIN %[3]s om USING (object_id)
  WHERE c.coll_name LIKE '/%[4]s/%%' AND d1.data_repl_num = (SELECT min(d2.data_repl_num) FROM r_data_main d2 WHERE d2.data_id = d1.data_id)) q ORDER BY id`, uuidTable, permsTable, metaTable, folderBase)
 
-	return tx.tx.Query(query)
+	return tx.tx.QueryContext(ctx, query)
 }
 
 // GetCollections returns a sql.Rows for collections using the temporary tables which should already be set up
-func (tx *ICATTx) GetCollections(uuidTable string, permsTable string, metaTable string, folderBase string) (*sql.Rows, error) {
+func (tx *ICATTx) GetCollections(ctx context.Context, uuidTable string, permsTable string, metaTable string, folderBase string) (*sql.Rows, error) {
 	query := fmt.Sprintf(`SELECT id, to_json(q.*) FROM (
 SELECT ou.id "id",
        coll_name "path",
@@ -120,5 +120,5 @@ SELECT ou.id "id",
   LEFT JOIN %[3]s om USING (object_id)
  WHERE coll_name LIKE '/%[4]s/%%' and coll_type = '') q ORDER BY id`, uuidTable, permsTable, metaTable, folderBase)
 
-	return tx.tx.Query(query)
+	return tx.tx.QueryContext(ctx, query)
 }
