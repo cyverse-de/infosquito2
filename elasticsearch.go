@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/cyverse-de/esutils"
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"gopkg.in/olivere/elastic.v5"
 )
 
@@ -14,9 +16,11 @@ type ESConnection struct {
 	index string
 }
 
+var httpClient = http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
+
 // SetupES initializes an ESConnection for use
 func SetupES(base, user, password, index string) (*ESConnection, error) {
-	c, err := elastic.NewClient(elastic.SetSniff(false), elastic.SetURL(base), elastic.SetBasicAuth(user, password))
+	c, err := elastic.NewClient(elastic.SetSniff(false), elastic.SetURL(base), elastic.SetBasicAuth(user, password), elastic.SetHttpClient(&httpClient))
 
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create elastic client")
