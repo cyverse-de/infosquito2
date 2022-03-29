@@ -9,7 +9,7 @@ require (
 	github.com/cyverse-de/messaging/v9 v9.0.1
 	github.com/deckarep/golang-set v0.0.0-20171013212420-1d4478f51bed
 	github.com/hashicorp/hcl v0.0.0-20180404174102-ef8a98b0bbce // indirect
-	github.com/lib/pq v0.0.0-20180523175426-90697d60dd84
+	github.com/lib/pq v1.10.4
 	github.com/magiconair/properties v1.8.0 // indirect
 	github.com/mitchellh/mapstructure v0.0.0-20180511142126-bb74f1db0675 // indirect
 	github.com/onsi/ginkgo v1.14.2 // indirect
