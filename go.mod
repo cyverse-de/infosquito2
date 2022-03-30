@@ -6,7 +6,7 @@ require (
 	github.com/cyverse-de/configurate v0.0.0-20190318152107-8f767cb828d9
 	github.com/cyverse-de/dbutil v1.0.1
 	github.com/cyverse-de/esutils v1.0.1
-	github.com/cyverse-de/messaging/v9 v9.1.3
+	github.com/cyverse-de/messaging/v9 v9.1.4
 	github.com/deckarep/golang-set v0.0.0-20171013212420-1d4478f51bed
 	github.com/lib/pq v1.10.4
 	github.com/magiconair/properties v1.8.6 // indirect
