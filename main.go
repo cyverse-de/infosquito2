@@ -7,25 +7,21 @@ import (
 	"math"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/sirupsen/logrus"
 
 	"github.com/cyverse-de/configurate"
+	"github.com/cyverse-de/go-mod/otelutils"
 	"github.com/spf13/viper"
 
 	"github.com/cyverse-de/messaging/v9"
 	"github.com/streadway/amqp"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/jaeger"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
-	tracesdk "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
 )
 
 const otelName = "github.com/cyverse-de/infosquito2"
+const serviceName = "infosquito2"
 const defaultConfig = `
 amqp:
   uri: amqp://guest:guest@rabbit:5672/
@@ -52,8 +48,8 @@ const prefixRoutingKey string = "index.data.prefix"
 const prefixRoutingKeyLen int = len(prefixRoutingKey)
 
 var log = logrus.WithFields(logrus.Fields{
-	"service": "infosquito2",
-	"art-id":  "infosquito2",
+	"service": serviceName,
+	"art-id":  serviceName,
 	"group":   "org.cyverse",
 })
 
@@ -77,8 +73,6 @@ var (
 	dbURI                 string
 	maxInPrefix           int
 	basePrefixLength      int
-
-	tracerProvider *tracesdk.TracerProvider
 )
 
 func init() {
@@ -142,9 +136,9 @@ func loadAMQPConfig() {
 
 func getQueueName(prefix string) string {
 	if len(prefix) > 0 {
-		return fmt.Sprintf("%s.infosquito2", prefix)
+		return fmt.Sprintf("%s.%s", prefix, serviceName)
 	}
-	return "infosquito2"
+	return serviceName
 }
 
 func generatePrefixes(length int) []string {
@@ -228,57 +222,15 @@ func handlePrefix(context context.Context, del amqp.Delivery, db *ICATConnection
 	return nil
 }
 
-func jaegerTracerProvider(url string) (*tracesdk.TracerProvider, error) {
-	// Create the Jaeger exporter
-	exp, err := jaeger.New(jaeger.WithCollectorEndpoint(jaeger.WithEndpoint(url)))
-	if err != nil {
-		return nil, err
-	}
-
-	tp := tracesdk.NewTracerProvider(
-		tracesdk.WithBatcher(exp),
-		tracesdk.WithResource(resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceNameKey.String("infosquito2"),
-		)),
-	)
-
-	return tp, nil
-}
-
 func main() {
 
 	checkMode()
 	initConfig(*cfgPath)
 
-	otelTracesExporter := os.Getenv("OTEL_TRACES_EXPORTER")
-	if otelTracesExporter == "jaeger" {
-		jaegerEndpoint := os.Getenv("OTEL_EXPORTER_JAEGER_ENDPOINT")
-		if jaegerEndpoint == "" {
-			log.Warn("Jaeger set as OpenTelemetry trace exporter, but no Jaeger endpoint configured.")
-		} else {
-			tp, err := jaegerTracerProvider(jaegerEndpoint)
-			if err != nil {
-				log.Fatal(err)
-			}
-			tracerProvider = tp
-			otel.SetTracerProvider(tp)
-			otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
-		}
-	}
-
-	if tracerProvider != nil {
-		tracerCtx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		defer func(tracerContext context.Context) {
-			ctx, cancel := context.WithTimeout(tracerContext, time.Second*5)
-			defer cancel()
-			if err := tracerProvider.Shutdown(ctx); err != nil {
-				log.Fatal(err)
-			}
-		}(tracerCtx)
-	}
+	var tracerCtx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	shutdown := otelutils.TracerProviderFromEnv(tracerCtx, serviceName, func(e error) { log.Fatal(e) })
+	defer shutdown()
 
 	db, err := SetupDB(dbURI)
 	if err != nil {
