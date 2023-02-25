@@ -18,7 +18,7 @@ require (
 	github.com/streadway/amqp v1.0.1-0.20200716223359-e6b33f460591
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.30.0
 	go.opentelemetry.io/otel v1.6.1
-	golang.org/x/sys v0.0.0-20220403205710-6acee93ad0eb // indirect
+	golang.org/x/sys v0.1.0 // indirect
 	gopkg.in/ini.v1 v1.66.4 // indirect
 	gopkg.in/olivere/elastic.v5 v5.0.86
 )
