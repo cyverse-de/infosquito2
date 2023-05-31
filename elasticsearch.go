@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 
-	"github.com/cyverse-de/esutils"
+	"github.com/cyverse-de/esutils/v3"
+	"github.com/olivere/elastic/v7"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"gopkg.in/olivere/elastic.v5"
 )
 
 // ESConnection wraps an elastic.Client along with an index to use
@@ -16,7 +17,7 @@ type ESConnection struct {
 	index string
 }
 
-var httpClient = http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
+var httpClient = http.Client{Transport: otelhttp.NewTransport(&http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}})}
 
 // SetupES initializes an ESConnection for use
 func SetupES(base, user, password, index string) (*ESConnection, error) {
