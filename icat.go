@@ -22,8 +22,8 @@ type ICATTx struct {
 	tx *sql.Tx
 }
 
-// SetupDB initializes an ICATConnection for the given dbURI
-func SetupDB(dbURI string) (*ICATConnection, error) {
+// SetupICAT initializes an ICATConnection for the given dbURI
+func SetupICAT(dbURI string) (*ICATConnection, error) {
 	connector, err := dbutil.NewDefaultConnector("1m")
 	if err != nil {
 		return nil, err

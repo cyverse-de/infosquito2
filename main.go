@@ -40,8 +40,11 @@ elasticsearch:
   base: http://elasticsearch:9200
   index: data
 
-db:
+icat:
   uri: postgres://ICAT:fakepassword@icat-db:5432/ICAT?sslmode=disable
+
+db:
+  uri: postgres://de:fakepassword@de-db:5432/de?sslmode=disable
 `
 
 const prefixRoutingKey string = "index.data.prefix"
@@ -70,6 +73,7 @@ var (
 	elasticsearchPassword string
 	elasticsearchIndex    string
 	irodsZone             string
+	ICATURI               string
 	dbURI                 string
 	maxInPrefix           int
 	basePrefixLength      int
@@ -105,7 +109,7 @@ func initConfig(cfgPath string) {
 		log.Fatalf("Unable to initialize the default configuration settings: %s", err)
 	}
 
-	dbURI = cfg.GetString("db.uri")
+	ICATURI = cfg.GetString("icat.uri")
 	elasticsearchBase = cfg.GetString("elasticsearch.base")
 	elasticsearchUser = cfg.GetString("elasticsearch.user")
 	elasticsearchPassword = cfg.GetString("elasticsearch.password")
@@ -232,7 +236,7 @@ func main() {
 	shutdown := otelutils.TracerProviderFromEnv(tracerCtx, serviceName, func(e error) { log.Fatal(e) })
 	defer shutdown()
 
-	db, err := SetupDB(dbURI)
+	db, err := SetupICAT(ICATURI)
 	if err != nil {
 		log.Fatalf("Unable to set up the database: %s", err)
 	}
