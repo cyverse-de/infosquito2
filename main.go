@@ -78,8 +78,9 @@ var (
 
 	irodsZone string
 
-	ICATURI string
-	dbURI   string
+	ICATURI  string
+	dbURI    string
+	dbSchema string
 
 	maxInPrefix      int
 	basePrefixLength int
@@ -117,6 +118,8 @@ func initConfig(cfgPath string) {
 
 	ICATURI = cfg.GetString("icat.uri")
 	dbURI = cfg.GetString("db.uri")
+	dbSchema = cfg.GetString("db.schema")
+
 	elasticsearchBase = cfg.GetString("elasticsearch.base")
 	elasticsearchUser = cfg.GetString("elasticsearch.user")
 	elasticsearchPassword = cfg.GetString("elasticsearch.password")
@@ -204,7 +207,7 @@ func handleIndex(context context.Context, del amqp.Delivery, publishClient *mess
 	defer span.End()
 
 	// reindex tags
-	err = publishClient.PublishContext(context, "index.tags", []byte{})
+	err := publishClient.PublishContext(context, "index.tags", []byte{})
 
 	log.Infof("Purging dewey queue %s", amqpDeweyQueue)
 	err = deweyClient.PurgeQueue(amqpDeweyQueue)
@@ -259,7 +262,7 @@ func main() {
 		log.Fatalf("Unable to set up the ICAT database: %s", err)
 	}
 
-	db, err := SetupDEDB(dbURI)
+	db, err := SetupDEDB(dbURI, dbSchema)
 	if err != nil {
 		log.Fatalf("Unable to set up the DE database: %s", err)
 	}
@@ -272,6 +275,10 @@ func main() {
 	if *mode == "full" {
 		log.Info("Full indexing mode selected.")
 		// do full mode
+		err = ReindexTags(context.Background(), db, es, irodsZone)
+		if err != nil {
+			log.Fatalf("Full indexing (tags) failed: %s", err)
+		}
 		for _, prefix := range generatePrefixes(basePrefixLength) {
 			log.Infof("Reindexing prefix %s", prefix)
 			err = tryReindexPrefix(context.Background(), icat, es, prefix, irodsZone)
@@ -279,7 +286,6 @@ func main() {
 				log.Fatalf("Full reindexing failed: %s", err)
 			}
 		}
-		// XXX: tag indexing here
 		return
 	}
 

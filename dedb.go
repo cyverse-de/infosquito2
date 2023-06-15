@@ -82,24 +82,24 @@ func (tx *DEDBTx) CreateTemporaryTable(ctx context.Context, name string, query s
 
 // GetTags returns a sql.Rows for all tags
 func (tx *DEDBTx) GetTags(ctx context.Context, irodsZone string) (*sql.Rows, error) {
-	query = fmt.Sprintf(`WITH attached (tag_id, targets) AS (
+	query := fmt.Sprintf(`WITH attached (tag_id, targets) AS (
 SELECT tag_id, 
-       json_agg(format('{"id": %s, "type": %s}',
+       json_agg(format('{"id": %%s, "type": %%s}',
            coalesce(to_json(a_t.target_id::text), 'null'::json),
 	   coalesce(to_json(a_t.target_type::text), 'null'::json))::json) "targets"
   FROM attached_tags a_t WHERE a_t.target_type IN ('file', 'folder') GROUP BY a_t.tag_id
 )
 SELECT id, to_json(q.*) FROM (
 SELECT t.id::text,
+       'tag' "doc_type",
        t.value,
        t.description,
        t.owner_id || '#%[1]s' "creator",
        t.created_on "dateCreated",
        t.modified_on "dateModified",
-       coalesce(a_t.targets, json_build_array()) "targets"
+       coalesce(attached.targets, json_build_array()) "targets"
   FROM %[2]s.tags t
-  LEFT JOIN attached ON (t.id = attached.tag_id)
-  WHERE a_t.target_type IN ('file', 'folder')
-        ) q ORDER BY id`, irodsZone, tx.schema)
+  LEFT JOIN attached ON (t.id = attached.tag_id)) q ORDER BY id`, irodsZone, tx.schema)
+	log.Debugf("Tags query: %s", query)
 	return tx.tx.QueryContext(ctx, query)
 }

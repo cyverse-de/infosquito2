@@ -43,6 +43,8 @@ type rowMetadata struct {
 	collsAdded         int64
 	collsUpdated       int64
 	collsRemoved       int64
+	tags               int64
+	tagsRemoved        int64
 }
 
 func logTime(prefixlog *logrus.Entry, start time.Time, rows *rowMetadata) {
@@ -294,7 +296,7 @@ func processDeletions(context context.Context, log *logrus.Entry, rows *rowMetad
 				log.Debugf("collection %s not seen in ICAT, deleting", id)
 				rows.collsRemoved++
 			}
-			req := elastic.NewBulkDeleteRequest().Index(es.index).Type(docType).Id(id)
+			req := elastic.NewBulkDeleteRequest().Index(es.index).Id(id)
 			err := indexer.Add(req)
 			if err != nil {
 				return errors.Wrap(err, "Got error adding delete to indexer")
