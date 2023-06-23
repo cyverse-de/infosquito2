@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
 	"github.com/cyverse-de/configurate"
@@ -194,7 +195,7 @@ func publishPrefixMessages(context context.Context, prefixes []string, client *m
 		if err != nil {
 			rejectErr := del.Reject(!del.Redelivered)
 			if rejectErr != nil {
-				log.Error(rejectErr)
+				log.Error(errors.Wrap(rejectErr, "Failed rejecting the index message after failing to publish prefix messages"))
 			}
 			return err
 		}
@@ -208,11 +209,14 @@ func handleIndex(context context.Context, del amqp.Delivery, publishClient *mess
 
 	// reindex tags
 	err := publishClient.PublishContext(context, "index.tags", []byte{})
+	if err != nil {
+		log.Error(errors.Wrap(err, "Failed to send tag index message"))
+	}
 
 	log.Infof("Purging dewey queue %s", amqpDeweyQueue)
 	err = deweyClient.PurgeQueue(amqpDeweyQueue)
 	if err != nil {
-		log.Error(err)
+		log.Error(errors.Wrap(err, "Failed purging dewey queue"))
 	}
 	return publishPrefixMessages(ctx, generatePrefixes(basePrefixLength), publishClient, del)
 }
@@ -231,7 +235,7 @@ func handlePrefix(context context.Context, del amqp.Delivery, db *ICATConnection
 		log.Errorf("Error reindexing prefix %s: %s", prefix, err)
 		rejectErr := del.Reject(!del.Redelivered)
 		if rejectErr != nil {
-			log.Error(rejectErr)
+			log.Error(errors.Wrap(rejectErr, "Failed rejecting message after failing to reindex prefix"))
 		}
 		return err
 	}
@@ -343,7 +347,7 @@ func main() {
 			}
 			err = del.Ack(false)
 			if err != nil {
-				log.Error(err)
+				log.Error(errors.Wrap(err, "Failed acknowledging message"))
 			}
 		},
 		1)
