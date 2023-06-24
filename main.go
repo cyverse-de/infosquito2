@@ -87,7 +87,7 @@ var (
 	basePrefixLength int
 )
 
-func init() {
+func initFlags() {
 	flag.Parse()
 	logrus.SetFormatter(&logrus.JSONFormatter{})
 	if !(*debug) {
@@ -252,6 +252,7 @@ func handleTags(context context.Context, del amqp.Delivery, db *DEDBConnection, 
 }
 
 func main() {
+	initFlags()
 
 	checkMode()
 	initConfig(*cfgPath)
