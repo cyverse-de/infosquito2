@@ -1,7 +1,6 @@
-FROM golang:1.15-alpine
+FROM golang:1.20-alpine
 
 RUN apk add --no-cache git
-RUN go get -u github.com/jstemmer/go-junit-report
 
 ARG git_commit=unknown
 ARG version="2.9.0"
