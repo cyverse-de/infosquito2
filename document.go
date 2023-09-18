@@ -17,8 +17,14 @@ type UserPermission struct {
 	Permission string `json:"permission"`
 }
 
+type BothMetadata struct {
+	IRODS   []Metadatum `json:"irods"`
+	Cyverse []Metadatum `json:"cyverse"`
+}
+
 // ElasticsearchDocument encodes the data for an object as it should be sent to Elasticsearch
 type ElasticsearchDocument struct {
+	DocType         string           `json:"doc_type"`
 	ID              string           `json:"id"`
 	Path            string           `json:"path"`
 	Label           string           `json:"label"`
@@ -27,7 +33,7 @@ type ElasticsearchDocument struct {
 	DateCreated     int64            `json:"dateCreated"`
 	DateModified    int64            `json:"dateModified"`
 	FileSize        int64            `json:"fileSize"`
-	Metadata        []Metadatum      `json:"metadata"`
+	Metadata        BothMetadata     `json:"metadata"`
 	UserPermissions []UserPermission `json:"userPermissions"`
 }
 
@@ -86,7 +92,11 @@ func (doc ElasticsearchDocument) Equal(other ElasticsearchDocument) bool {
 	}
 
 	// More computationally intensive fields to compare
-	if !metadataEqual(doc.Metadata, other.Metadata) {
+	if !metadataEqual(doc.Metadata.IRODS, other.Metadata.IRODS) {
+		return false
+	}
+
+	if !metadataEqual(doc.Metadata.Cyverse, other.Metadata.Cyverse) {
 		return false
 	}
 

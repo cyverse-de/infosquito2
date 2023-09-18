@@ -22,8 +22,8 @@ type ICATTx struct {
 	tx *sql.Tx
 }
 
-// SetupDB initializes an ICATConnection for the given dbURI
-func SetupDB(dbURI string) (*ICATConnection, error) {
+// SetupICAT initializes an ICATConnection for the given dbURI
+func SetupICAT(dbURI string) (*ICATConnection, error) {
 	connector, err := dbutil.NewDefaultConnector("1m")
 	if err != nil {
 		return nil, err
@@ -82,6 +82,7 @@ func (tx *ICATTx) CreateTemporaryTable(ctx context.Context, name string, query s
 func (tx *ICATTx) GetDataObjects(ctx context.Context, uuidTable string, permsTable string, metaTable string, folderBase string) (*sql.Rows, error) {
 	query := fmt.Sprintf(`SELECT id, to_json(q.*) FROM (
 SELECT ou.id "id",
+       'file' "doc_type",
        (c.coll_name || '/' || d1.data_name) "path",
        d1.data_name "label",
        (d1.data_owner_name || '#' || d1.data_owner_zone) "creator",
@@ -105,6 +106,7 @@ SELECT ou.id "id",
 func (tx *ICATTx) GetCollections(ctx context.Context, uuidTable string, permsTable string, metaTable string, folderBase string) (*sql.Rows, error) {
 	query := fmt.Sprintf(`SELECT id, to_json(q.*) FROM (
 SELECT ou.id "id",
+       'folder' "doc_type",
        coll_name "path",
        REPLACE(coll_name, parent_coll_name || '/', '') "label",
        (coll_owner_name || '#' || coll_owner_zone) "creator",

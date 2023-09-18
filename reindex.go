@@ -9,9 +9,9 @@ import (
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel"
 
-	"github.com/cyverse-de/esutils"
+	"github.com/cyverse-de/esutils/v3"
+	"github.com/olivere/elastic/v7"
 	"github.com/sirupsen/logrus"
-	"gopkg.in/olivere/elastic.v5"
 )
 
 var (
@@ -43,6 +43,8 @@ type rowMetadata struct {
 	collsAdded         int64
 	collsUpdated       int64
 	collsRemoved       int64
+	tags               int64
+	tagsRemoved        int64
 }
 
 func logTime(prefixlog *logrus.Entry, start time.Time, rows *rowMetadata) {
@@ -106,10 +108,10 @@ func createMetadataTable(context context.Context, log *logrus.Entry, tx *ICATTx)
 	ctx, span := otel.Tracer(otelName).Start(context, "createMetadataTable")
 	defer span.End()
 
-	r, err := tx.CreateTemporaryTable(ctx, "object_metadata", `select object_id, json_agg(format('{"attribute": %s, "value": %s, "unit": %s}',
+	r, err := tx.CreateTemporaryTable(ctx, "object_metadata", `select object_id, json_build_object('irods', json_agg(format('{"attribute": %s, "value": %s, "unit": %s}',
                         coalesce(to_json(m2.meta_attr_name), 'null'::json),
                         coalesce(to_json(m2.meta_attr_value), 'null'::json),
-                        coalesce(to_json(m2.meta_attr_unit), 'null'::json))::json ORDER BY meta_attr_name, meta_attr_value, meta_attr_unit)
+                        coalesce(to_json(m2.meta_attr_unit), 'null'::json))::json ORDER BY meta_attr_name, meta_attr_value, meta_attr_unit))
                        AS "metadata" from r_objt_metamap map2 left join r_meta_main m2 on map2.meta_id = m2.meta_id where m2.meta_attr_name <> 'ipc_UUID' and object_id IN (select object_id from object_uuids) group by object_id`)
 	if err != nil {
 		return err
@@ -126,18 +128,24 @@ func getSearchResults(context context.Context, log *logrus.Entry, prefix string,
 	esDocs := make(map[string]ElasticsearchDocument)
 	esDocTypes := make(map[string]string)
 
-	prefixQuery := elastic.NewBoolQuery().MinimumNumberShouldMatch(1).Should(elastic.NewPrefixQuery("id", strings.ToUpper(prefix)), elastic.NewPrefixQuery("id", strings.ToLower(prefix)))
+	prefixQuery := elastic.NewBoolQuery().
+		MinimumNumberShouldMatch(1).
+		Must(elastic.NewBoolQuery().
+			Should(elastic.NewTermQuery("doc_type", "file"),
+				elastic.NewTermQuery("doc_type", "folder"))).
+		Should(elastic.NewPrefixQuery("id", strings.ToUpper(prefix)),
+			elastic.NewPrefixQuery("id", strings.ToLower(prefix)))
 
-	searchService := es.es.Search(es.index).Type("file", "folder").Query(prefixQuery).Sort("id", true).Size(maxInPrefix)
+	searchService := es.es.Search(es.index).Query(prefixQuery).Sort("id", true).Size(maxInPrefix)
 	search, err := searchService.Do(ctx)
 	if err != nil {
 		return 0, nil, nil, err
 	}
 
-	log.Debugf("Got %d documents for prefix %s (ES)", search.Hits.TotalHits, prefix)
+	log.Debugf("Got %d documents for prefix %s (ES)", search.TotalHits(), prefix)
 
-	if search.Hits.TotalHits > int64(maxInPrefix) {
-		return search.Hits.TotalHits, nil, nil, ErrTooManyResults
+	if search.TotalHits() > int64(maxInPrefix) {
+		return search.TotalHits(), nil, nil, ErrTooManyResults
 	}
 
 	for _, hit := range search.Hits.Hits {
@@ -157,7 +165,7 @@ func getSearchResults(context context.Context, log *logrus.Entry, prefix string,
 		esDocs[hit.Id] = doc
 		esDocTypes[hit.Id] = hit.Type
 	}
-	return search.Hits.TotalHits, esDocs, esDocTypes, nil
+	return search.TotalHits(), esDocs, esDocTypes, nil
 }
 
 func classify(id, jsonstr string, esDocs map[string]ElasticsearchDocument) (DocumentClassification, error) {
@@ -177,8 +185,8 @@ func classify(id, jsonstr string, esDocs map[string]ElasticsearchDocument) (Docu
 	return NoAction, nil
 }
 
-func index(indexer *esutils.BulkIndexer, index, id, t, json string) error {
-	req := elastic.NewBulkIndexRequest().Index(index).Type(t).Id(id).Doc(json)
+func index(indexer *esutils.BulkIndexer, index, id, json string) error {
+	req := elastic.NewBulkIndexRequest().Index(index).Id(id).Doc(json)
 	// No need to check this error since we're returning
 	return indexer.Add(req)
 }
@@ -213,7 +221,7 @@ func processDataobjects(context context.Context, log *logrus.Entry, rows *rowMet
 		}
 
 		if classification == UpdateDocument || classification == IndexDocument {
-			if err = index(indexer, es.index, id, "file", selectedJSON); err != nil {
+			if err = index(indexer, es.index, id, selectedJSON); err != nil {
 				return err
 			}
 		}
@@ -256,7 +264,7 @@ func processCollections(context context.Context, log *logrus.Entry, rows *rowMet
 		}
 
 		if classification == UpdateDocument || classification == IndexDocument {
-			if err = index(indexer, es.index, id, "folder", selectedJSON); err != nil {
+			if err = index(indexer, es.index, id, selectedJSON); err != nil {
 				return err
 			}
 		}
@@ -288,7 +296,7 @@ func processDeletions(context context.Context, log *logrus.Entry, rows *rowMetad
 				log.Debugf("collection %s not seen in ICAT, deleting", id)
 				rows.collsRemoved++
 			}
-			req := elastic.NewBulkDeleteRequest().Index(es.index).Type(docType).Id(id)
+			req := elastic.NewBulkDeleteRequest().Index(es.index).Id(id)
 			err := indexer.Add(req)
 			if err != nil {
 				return errors.Wrap(err, "Got error adding delete to indexer")

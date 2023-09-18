@@ -7,7 +7,9 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
 	"github.com/cyverse-de/configurate"
@@ -40,11 +42,12 @@ elasticsearch:
   base: http://elasticsearch:9200
   index: data
 
-db:
-  uri: postgres://ICAT:fakepassword@icat-db:5432/ICAT?sslmode=disable
-
 icat:
   uri: postgres://ICAT:fakepassword@icat-db:5432/ICAT?sslmode=disable
+
+db:
+  uri: postgres://de:fakepassword@de-db:5432/metadata?sslmode=disable
+  schema: public
 `
 
 const prefixRoutingKey string = "index.data.prefix"
@@ -62,23 +65,29 @@ var (
 	debug   = flag.Bool("debug", false, "Set to true to enable debug logging")
 	cfg     *viper.Viper
 
-	amqpURI               string
-	amqpDeweyURI          string
-	amqpExchangeName      string
-	amqpExchangeType      string
-	amqpQueuePrefix       string
-	amqpDeweyQueue        string
+	amqpURI          string
+	amqpDeweyURI     string
+	amqpExchangeName string
+	amqpExchangeType string
+	amqpQueuePrefix  string
+	amqpDeweyQueue   string
+
 	elasticsearchBase     string
 	elasticsearchUser     string
 	elasticsearchPassword string
 	elasticsearchIndex    string
-	irodsZone             string
-	icatURI               string
-	maxInPrefix           int
-	basePrefixLength      int
+
+	irodsZone string
+
+	ICATURI  string
+	dbURI    string
+	dbSchema string
+
+	maxInPrefix      int
+	basePrefixLength int
 )
 
-func init() {
+func initFlags() {
 	flag.Parse()
 	logrus.SetFormatter(&logrus.JSONFormatter{})
 	if !(*debug) {
@@ -108,10 +117,10 @@ func initConfig(cfgPath string) {
 		log.Fatalf("Unable to initialize the default configuration settings: %s", err)
 	}
 
-	icatURI = cfg.GetString("icat.uri")
-	if icatURI == "" {
-		icatURI = cfg.GetString("db.uri")
-	}
+	ICATURI = cfg.GetString("icat.uri")
+	dbURI = cfg.GetString("db.uri")
+	dbSchema = cfg.GetString("db.schema")
+
 	elasticsearchBase = cfg.GetString("elasticsearch.base")
 	elasticsearchUser = cfg.GetString("elasticsearch.user")
 	elasticsearchPassword = cfg.GetString("elasticsearch.password")
@@ -186,7 +195,7 @@ func publishPrefixMessages(context context.Context, prefixes []string, client *m
 		if err != nil {
 			rejectErr := del.Reject(!del.Redelivered)
 			if rejectErr != nil {
-				log.Error(rejectErr)
+				log.Error(errors.Wrap(rejectErr, "Failed rejecting the index message after failing to publish prefix messages"))
 			}
 			return err
 		}
@@ -198,10 +207,16 @@ func handleIndex(context context.Context, del amqp.Delivery, publishClient *mess
 	ctx, span := otel.Tracer(otelName).Start(context, "handleIndex")
 	defer span.End()
 
-	log.Infof("Purging dewey queue %s", amqpDeweyQueue)
-	err := deweyClient.PurgeQueue(amqpDeweyQueue)
+	// reindex tags
+	err := publishClient.PublishContext(context, "index.tags", []byte{})
 	if err != nil {
-		log.Error(err)
+		log.Error(errors.Wrap(err, "Failed to send tag index message"))
+	}
+
+	log.Infof("Purging dewey queue %s", amqpDeweyQueue)
+	err = deweyClient.PurgeQueue(amqpDeweyQueue)
+	if err != nil {
+		log.Error(errors.Wrap(err, "Failed purging dewey queue"))
 	}
 	return publishPrefixMessages(ctx, generatePrefixes(basePrefixLength), publishClient, del)
 }
@@ -220,7 +235,7 @@ func handlePrefix(context context.Context, del amqp.Delivery, db *ICATConnection
 		log.Errorf("Error reindexing prefix %s: %s", prefix, err)
 		rejectErr := del.Reject(!del.Redelivered)
 		if rejectErr != nil {
-			log.Error(rejectErr)
+			log.Error(errors.Wrap(rejectErr, "Failed rejecting message after failing to reindex prefix"))
 		}
 		return err
 	}
@@ -228,7 +243,16 @@ func handlePrefix(context context.Context, del amqp.Delivery, db *ICATConnection
 	return nil
 }
 
+func handleTags(context context.Context, del amqp.Delivery, db *DEDBConnection, es *ESConnection) error {
+	ctx, span := otel.Tracer(otelName).Start(context, "handleTags")
+	defer span.End()
+
+	// XXX: reject messages on error
+	return ReindexTags(ctx, db, es, irodsZone)
+}
+
 func main() {
+	initFlags()
 
 	checkMode()
 	initConfig(*cfgPath)
@@ -238,9 +262,14 @@ func main() {
 	shutdown := otelutils.TracerProviderFromEnv(tracerCtx, serviceName, func(e error) { log.Fatal(e) })
 	defer shutdown()
 
-	db, err := SetupDB(icatURI)
+	icat, err := SetupICAT(ICATURI)
 	if err != nil {
-		log.Fatalf("Unable to set up the database: %s", err)
+		log.Fatalf("Unable to set up the ICAT database: %s", err)
+	}
+
+	db, err := SetupDEDB(dbURI, dbSchema)
+	if err != nil {
+		log.Fatalf("Unable to set up the DE database: %s", err)
 	}
 
 	es, err := SetupES(elasticsearchBase, elasticsearchUser, elasticsearchPassword, elasticsearchIndex)
@@ -251,9 +280,13 @@ func main() {
 	if *mode == "full" {
 		log.Info("Full indexing mode selected.")
 		// do full mode
+		err = ReindexTags(context.Background(), db, es, irodsZone)
+		if err != nil {
+			log.Fatalf("Full indexing (tags) failed: %s", err)
+		}
 		for _, prefix := range generatePrefixes(basePrefixLength) {
 			log.Infof("Reindexing prefix %s", prefix)
-			err = tryReindexPrefix(context.Background(), db, es, prefix, irodsZone)
+			err = tryReindexPrefix(context.Background(), icat, es, prefix, irodsZone)
 			if err != nil {
 				log.Fatalf("Full reindexing failed: %s", err)
 			}
@@ -300,16 +333,22 @@ func main() {
 			var err error
 			log.Debugf("Got message %s", del.RoutingKey)
 			if del.RoutingKey == "index.all" || del.RoutingKey == "index.data" {
+				// send prefix messages and an index.tags message
+				// this means index.data will also index tags but that's probably fine
 				err = handleIndex(context, del, publishClient, deweyClient)
+			} else if del.RoutingKey == "index.tags" {
+				err = handleTags(context, del, db, es)
+			} else if strings.HasPrefix(del.RoutingKey, prefixRoutingKey) {
+				err = handlePrefix(context, del, icat, es, publishClient)
 			} else {
-				err = handlePrefix(context, del, db, es, publishClient)
+				log.Errorf("Got unknown routing key %s", del.RoutingKey)
 			}
 			if err != nil {
 				return
 			}
 			err = del.Ack(false)
 			if err != nil {
-				log.Error(err)
+				log.Error(errors.Wrap(err, "Failed acknowledging message"))
 			}
 		},
 		1)
