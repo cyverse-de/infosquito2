@@ -328,7 +328,7 @@ func main() {
 		amqpExchangeName,
 		amqpExchangeType,
 		queueName,
-		[]string{"index.all", "index.data", fmt.Sprintf("%s.#", prefixRoutingKey)},
+		[]string{"index.all", "index.data", "index.tags", fmt.Sprintf("%s.#", prefixRoutingKey)},
 		func(context context.Context, del amqp.Delivery) {
 			var err error
 			log.Debugf("Got message %s", del.RoutingKey)
