@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"time"
@@ -21,6 +22,10 @@ var (
 
 // DocumentClassification specifies whether a given document should be updated, reindexed, or nothing
 type DocumentClassification int
+
+type CyverseMetadata struct {
+	Cyverse []Metadatum `json:"cyverse"`
+}
 
 const (
 	// NoAction : Take no action
@@ -168,21 +173,17 @@ func getSearchResults(context context.Context, log *logrus.Entry, prefix string,
 	return search.TotalHits(), esDocs, esDocTypes, nil
 }
 
-func classify(id, jsonstr string, esDocs map[string]ElasticsearchDocument) (DocumentClassification, error) {
+func classify(id string, doc ElasticsearchDocument, esDocs map[string]ElasticsearchDocument) DocumentClassification {
 	_, ok := esDocs[id]
 	if !ok {
-		return IndexDocument, nil
-	}
-	var doc ElasticsearchDocument
-	if err := json.Unmarshal([]byte(jsonstr), &doc); err != nil {
-		return NoAction, err
+		return IndexDocument
 	}
 
 	if !doc.Equal(esDocs[id]) {
-		return UpdateDocument, nil
+		return UpdateDocument
 	}
 
-	return NoAction, nil
+	return NoAction
 }
 
 func index(indexer *esutils.BulkIndexer, index, id, json string) error {
@@ -191,7 +192,22 @@ func index(indexer *esutils.BulkIndexer, index, id, json string) error {
 	return indexer.Add(req)
 }
 
-func processDataobjects(context context.Context, log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
+// preprocessMetadata takes in the sql.Rows from the DE database and turns it into a map.
+func preprocessMetadata(rows *sql.Rows) (map[string]string, error) {
+	var err error
+	var ret = make(map[string]string)
+	for rows.Next() {
+		var id, selectedJSON string
+		if err = rows.Scan(&id, &selectedJSON); err != nil {
+			return ret, err
+		}
+
+		ret[id] = selectedJSON
+	}
+	return ret, nil
+}
+
+func processDataobjects(context context.Context, log *logrus.Entry, rows *rowMetadata, avus map[string]string, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
 	ctx, span := otel.Tracer(otelName).Start(context, "processDataobjects")
 	defer span.End()
 
@@ -207,10 +223,26 @@ func processDataobjects(context context.Context, log *logrus.Entry, rows *rowMet
 		}
 
 		seenEsDocs[id] = true
-		classification, err := classify(id, selectedJSON, esDocs)
+		var doc ElasticsearchDocument
+		var classification DocumentClassification
+		err := json.Unmarshal([]byte(selectedJSON), &doc)
 		if err != nil {
 			return err
 		}
+
+		_, ok := avus[id]
+		if ok {
+			var cymeta CyverseMetadata
+			err := json.Unmarshal([]byte(avus[id]), &cymeta)
+			if err != nil {
+				return err
+			}
+
+			doc.Metadata.Cyverse = cymeta.Cyverse
+			log.Debugf("Integrated CyVerse metadata: %+v", doc)
+		}
+
+		classification = classify(id, doc, esDocs)
 
 		if classification == UpdateDocument {
 			log.Debugf("data-object %s, documents differ, indexing", id)
@@ -221,7 +253,13 @@ func processDataobjects(context context.Context, log *logrus.Entry, rows *rowMet
 		}
 
 		if classification == UpdateDocument || classification == IndexDocument {
-			if err = index(indexer, es.index, id, selectedJSON); err != nil {
+			reencode, err := json.Marshal(doc)
+			if err != nil {
+				return err
+			}
+			processedJSON := string(reencode)
+
+			if err = index(indexer, es.index, id, processedJSON); err != nil {
 				return err
 			}
 		}
@@ -234,7 +272,7 @@ func processDataobjects(context context.Context, log *logrus.Entry, rows *rowMet
 	return nil
 }
 
-func processCollections(context context.Context, log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
+func processCollections(context context.Context, log *logrus.Entry, rows *rowMetadata, avus map[string]string, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
 	ctx, span := otel.Tracer(otelName).Start(context, "processCollections")
 	defer span.End()
 
@@ -250,9 +288,25 @@ func processCollections(context context.Context, log *logrus.Entry, rows *rowMet
 		}
 
 		seenEsDocs[id] = true
-		classification, err := classify(id, selectedJSON, esDocs)
+		var doc ElasticsearchDocument
+		var classification DocumentClassification
+		err := json.Unmarshal([]byte(selectedJSON), &doc)
 		if err != nil {
 			return err
+		}
+
+		classification = classify(id, doc, esDocs)
+
+		_, ok := avus[id]
+		if ok {
+			var cymeta CyverseMetadata
+			err := json.Unmarshal([]byte(avus[id]), &cymeta)
+			if err != nil {
+				return err
+			}
+
+			doc.Metadata.Cyverse = cymeta.Cyverse
+			log.Debugf("Integrated CyVerse metadata: %+v", doc)
 		}
 
 		if classification == UpdateDocument {
@@ -264,7 +318,13 @@ func processCollections(context context.Context, log *logrus.Entry, rows *rowMet
 		}
 
 		if classification == UpdateDocument || classification == IndexDocument {
-			if err = index(indexer, es.index, id, selectedJSON); err != nil {
+			reencode, err := json.Marshal(doc)
+			if err != nil {
+				return err
+			}
+			processedJSON := string(reencode)
+
+			if err = index(indexer, es.index, id, processedJSON); err != nil {
 				return err
 			}
 		}
@@ -309,7 +369,7 @@ func processDeletions(context context.Context, log *logrus.Entry, rows *rowMetad
 }
 
 // ReindexPrefix attempts to reindex a given prefix given a DB and ES connection
-func ReindexPrefix(context context.Context, db *ICATConnection, es *ESConnection, prefix, irodsZone string) error {
+func ReindexPrefix(context context.Context, icat *ICATConnection, dedb *DEDBConnection, es *ESConnection, prefix, irodsZone string) error {
 	ctx, span := otel.Tracer(otelName).Start(context, "ReindexPrefix")
 	defer span.End()
 
@@ -331,30 +391,56 @@ func ReindexPrefix(context context.Context, db *ICATConnection, es *ESConnection
 		return err
 	}
 
-	tx, err := db.BeginTx(ctx, nil)
+	deTx, err := dedb.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	rb := func() {
-		err := tx.tx.Rollback()
+	deRollback := func() {
+		err := deTx.tx.Rollback()
 		if err != nil && err.Error() != "sql: transaction has already been committed or rolled back" {
-			prefixlog.Debugf("Failed rolling back transaction: %s", err.Error())
+			prefixlog.Debugf("Failed rolling back DE transaction: %s", err.Error())
 		}
 	}
-	defer rb()
+	defer deRollback()
+
+	// probably fetch metadata around here and create a lookup object of
+	// some sort to pass to the process* functions -- possibly in a
+	// goroutine? we shouldn't need it until after the temp tables are made
+	// in the ICAT
+	avusRows, err := deTx.GetAVUs(ctx, prefix)
+	if err != nil {
+		return err
+	}
+	defer avusRows.Close()
+
+	avus, err := preprocessMetadata(avusRows)
+	avusRows.Close()
+	deRollback()
+
+	icatTx, err := icat.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	icatRollback := func() {
+		err := icatTx.tx.Rollback()
+		if err != nil && err.Error() != "sql: transaction has already been committed or rolled back" {
+			prefixlog.Debugf("Failed rolling back ICAT transaction: %s", err.Error())
+		}
+	}
+	defer icatRollback()
 
 	// COLLECT PREREQUISITES
-	r, err := createUuidsTable(ctx, prefixlog, prefix, tx)
+	r, err := createUuidsTable(ctx, prefixlog, prefix, icatTx)
 	rows.rows = r
 	if err != nil {
 		return err
 	}
 
-	if err = createPermsTable(ctx, prefixlog, tx); err != nil {
+	if err = createPermsTable(ctx, prefixlog, icatTx); err != nil {
 		return err
 	}
 
-	if err = createMetadataTable(ctx, prefixlog, tx); err != nil {
+	if err = createMetadataTable(ctx, prefixlog, icatTx); err != nil {
 		return err
 	}
 
@@ -362,15 +448,16 @@ func ReindexPrefix(context context.Context, db *ICATConnection, es *ESConnection
 	indexer := es.NewBulkIndexer(ctx, 1000)
 	defer indexer.Flush()
 
-	if err = processDataobjects(ctx, prefixlog, &rows, esDocs, seenEsDocs, indexer, es, tx, irodsZone); err != nil {
+	if err = processDataobjects(ctx, prefixlog, &rows, avus, esDocs, seenEsDocs, indexer, es, icatTx, irodsZone); err != nil {
 		return err
 	}
 
-	if err = processCollections(ctx, prefixlog, &rows, esDocs, seenEsDocs, indexer, es, tx, irodsZone); err != nil {
+	if err = processCollections(ctx, prefixlog, &rows, avus, esDocs, seenEsDocs, indexer, es, icatTx, irodsZone); err != nil {
 		return err
 	}
 
-	rb() // Roll back tx as early as possible
+	// Roll back transactions as early as possible
+	icatRollback()
 
 	if err = processDeletions(ctx, prefixlog, &rows, esDocs, esDocTypes, seenEsDocs, indexer, es); err != nil {
 		return err

@@ -173,11 +173,11 @@ func splitPrefix(prefix string) []string {
 	return res
 }
 
-func tryReindexPrefix(context context.Context, db *ICATConnection, es *ESConnection, prefix, irodsZone string) error {
-	err := ReindexPrefix(context, db, es, prefix, irodsZone)
+func tryReindexPrefix(context context.Context, icat *ICATConnection, dedb *DEDBConnection, es *ESConnection, prefix, irodsZone string) error {
+	err := ReindexPrefix(context, icat, dedb, es, prefix, irodsZone)
 	if err == ErrTooManyResults {
 		for _, newprefix := range splitPrefix(prefix) {
-			err = tryReindexPrefix(context, db, es, newprefix, irodsZone)
+			err = tryReindexPrefix(context, icat, dedb, es, newprefix, irodsZone)
 			if err != nil {
 				return err
 			}
@@ -221,13 +221,13 @@ func handleIndex(context context.Context, del amqp.Delivery, publishClient *mess
 	return publishPrefixMessages(ctx, generatePrefixes(basePrefixLength), publishClient, del)
 }
 
-func handlePrefix(context context.Context, del amqp.Delivery, db *ICATConnection, es *ESConnection, publishClient *messaging.Client) error {
+func handlePrefix(context context.Context, del amqp.Delivery, icat *ICATConnection, dedb *DEDBConnection, es *ESConnection, publishClient *messaging.Client) error {
 	ctx, span := otel.Tracer(otelName).Start(context, "handlePrefix")
 	defer span.End()
 
 	prefix := del.RoutingKey[prefixRoutingKeyLen+1:]
 	log.Debugf("Triggered reindexing prefix %s", prefix)
-	err := ReindexPrefix(ctx, db, es, prefix, irodsZone)
+	err := ReindexPrefix(ctx, icat, dedb, es, prefix, irodsZone)
 	if err == ErrTooManyResults {
 		log.Infof("Prefix %s too large, splitting", prefix)
 		return publishPrefixMessages(ctx, splitPrefix(prefix), publishClient, del)
@@ -286,7 +286,7 @@ func main() {
 		}
 		for _, prefix := range generatePrefixes(basePrefixLength) {
 			log.Infof("Reindexing prefix %s", prefix)
-			err = tryReindexPrefix(context.Background(), icat, es, prefix, irodsZone)
+			err = tryReindexPrefix(context.Background(), icat, db, es, prefix, irodsZone)
 			if err != nil {
 				log.Fatalf("Full reindexing failed: %s", err)
 			}
@@ -339,7 +339,7 @@ func main() {
 			} else if del.RoutingKey == "index.tags" {
 				err = handleTags(context, del, db, es)
 			} else if strings.HasPrefix(del.RoutingKey, prefixRoutingKey) {
-				err = handlePrefix(context, del, icat, es, publishClient)
+				err = handlePrefix(context, del, icat, db, es, publishClient)
 			} else {
 				log.Errorf("Got unknown routing key %s", del.RoutingKey)
 			}
