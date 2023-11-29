@@ -403,10 +403,6 @@ func ReindexPrefix(context context.Context, icat *ICATConnection, dedb *DEDBConn
 	}
 	defer deRollback()
 
-	// probably fetch metadata around here and create a lookup object of
-	// some sort to pass to the process* functions -- possibly in a
-	// goroutine? we shouldn't need it until after the temp tables are made
-	// in the ICAT
 	avusRows, err := deTx.GetAVUs(ctx, prefix)
 	if err != nil {
 		return err
