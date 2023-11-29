@@ -414,6 +414,9 @@ func ReindexPrefix(context context.Context, icat *ICATConnection, dedb *DEDBConn
 	defer avusRows.Close()
 
 	avus, err := preprocessMetadata(avusRows)
+	if err != nil {
+		return err
+	}
 	avusRows.Close()
 	deRollback()
 
