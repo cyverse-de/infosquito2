@@ -103,3 +103,49 @@ SELECT t.id::text,
 	log.Debugf("Tags query: %s", query)
 	return tx.tx.QueryContext(ctx, query)
 }
+
+// GetAVUs returns a sql.Rows for CyVerse metadata AVUs with an optional UUID prefix for the ultimate target ID (but still including nested AVUs)
+func (tx *DEDBTx) GetAVUs(ctx context.Context, rootTargetIdPrefix string) (*sql.Rows, error) {
+	var where string
+	if rootTargetIdPrefix != "" {
+		where = fmt.Sprintf("WHERE target_id::text LIKE '%s%%'", rootTargetIdPrefix)
+	}
+	query := fmt.Sprintf(`WITH RECURSIVE all_avus AS (
+SELECT cast(id as varchar),
+       attribute,
+       value,
+       unit,
+       cast(target_id as varchar),
+       cast(target_type as varchar),
+       created_by,
+       modified_by,
+       created_on,
+       modified_on
+  FROM %s.avus
+  %s
+UNION ALL
+SELECT cast(avus.id as varchar),
+       avus.attribute,
+       avus.value,
+       avus.unit,
+       cast(aa.target_id as varchar),
+       cast(aa.target_type as varchar),
+       avus.created_by,
+       avus.modified_by,
+       avus.created_on,
+       avus.modified_on
+  FROM %s.avus
+  JOIN all_avus aa ON (avus.target_id = cast(aa.id as uuid) AND avus.target_type = 'avu')
+)
+SELECT target_id, json_build_object('cyverse', json_agg(format('{"attribute": %%s, "value": %%s, "unit": %%s}',
+        coalesce(to_json(attribute), 'null'::json),
+        coalesce(to_json(value), 'null'::json),
+        coalesce(to_json(unit), 'null'::json))::json ORDER BY attribute, value, unit))
+  AS "metadata"
+  FROM all_avus
+  GROUP BY target_id
+  ORDER BY target_id
+`, tx.schema, where, tx.schema)
+	log.Debugf("AVUs query: %s", query)
+	return tx.tx.QueryContext(ctx, query)
+}
