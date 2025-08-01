@@ -1,6 +1,5 @@
-FROM golang:1.21-alpine
+FROM golang:1.21
 
-RUN apk add --no-cache git
 
 ARG git_commit=unknown
 ARG version="2.9.0"
