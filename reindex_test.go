@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/cyverse-de/esutils/v3"
 	"github.com/olivere/elastic/v7"
 	"github.com/sirupsen/logrus"
@@ -170,4 +173,449 @@ func TestProcessDeletions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// newMockICATTx creates an ICATTx backed by a sqlmock database for testing.
+func newMockICATTx(t *testing.T) (*ICATTx, sqlmock.Sqlmock) {
+	t.Helper()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	mock.ExpectBegin()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("failed to begin mock tx: %v", err)
+	}
+	return &ICATTx{tx: tx}, mock
+}
+
+// mustJSON marshals v to a JSON string, failing the test on error.
+func mustJSON(t *testing.T, v interface{}) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("failed to marshal JSON: %v", err)
+	}
+	return string(b)
+}
+
+// --- processDataobjects ---
+
+func TestProcessDataobjects(t *testing.T) {
+	baseDoc := ElasticsearchDocument{
+		DocType:      "file",
+		ID:           "obj-1",
+		Path:         "/iplant/home/user/file.txt",
+		Label:        "file.txt",
+		Creator:      "user#iplant",
+		FileType:     "generic",
+		DateCreated:  1000,
+		DateModified: 2000,
+		FileSize:     512,
+	}
+
+	changedDoc := baseDoc
+	changedDoc.FileSize = 1024
+
+	successCases := []struct {
+		name                   string
+		dbRows                 [][]string // {id, json}
+		avus                   map[string]string
+		esDocs                 map[string]ElasticsearchDocument
+		wantDataobjects        int64
+		wantDataobjectsAdded   int64
+		wantDataobjectsUpdated int64
+		wantSeenIDs            []string
+	}{
+		{
+			name:            "empty-result-set",
+			dbRows:          nil,
+			avus:            map[string]string{},
+			esDocs:          map[string]ElasticsearchDocument{},
+			wantDataobjects: 0,
+		},
+		{
+			name:                 "new-document-indexed",
+			dbRows:               [][]string{{"obj-1", mustJSON(t, baseDoc)}},
+			avus:                 map[string]string{},
+			esDocs:               map[string]ElasticsearchDocument{},
+			wantDataobjects:      1,
+			wantDataobjectsAdded: 1,
+			wantSeenIDs:          []string{"obj-1"},
+		},
+		{
+			name:                   "changed-document-updated",
+			dbRows:                 [][]string{{"obj-1", mustJSON(t, changedDoc)}},
+			avus:                   map[string]string{},
+			esDocs:                 map[string]ElasticsearchDocument{"obj-1": baseDoc},
+			wantDataobjects:        1,
+			wantDataobjectsUpdated: 1,
+			wantSeenIDs:            []string{"obj-1"},
+		},
+		{
+			name:            "unchanged-document-no-action",
+			dbRows:          [][]string{{"obj-1", mustJSON(t, baseDoc)}},
+			avus:            map[string]string{},
+			esDocs:          map[string]ElasticsearchDocument{"obj-1": baseDoc},
+			wantDataobjects: 1,
+			wantSeenIDs:     []string{"obj-1"},
+		},
+		{
+			name:   "cyverse-metadata-merged",
+			dbRows: [][]string{{"obj-1", mustJSON(t, baseDoc)}},
+			avus: map[string]string{
+				"obj-1": `{"cyverse":[{"attribute":"tag","value":"important","unit":""}]}`,
+			},
+			esDocs:               map[string]ElasticsearchDocument{},
+			wantDataobjects:      1,
+			wantDataobjectsAdded: 1,
+			wantSeenIDs:          []string{"obj-1"},
+		},
+		{
+			name:   "cyverse-metadata-triggers-update",
+			dbRows: [][]string{{"obj-1", mustJSON(t, baseDoc)}},
+			avus: map[string]string{
+				"obj-1": `{"cyverse":[{"attribute":"tag","value":"important","unit":""}]}`,
+			},
+			esDocs:                 map[string]ElasticsearchDocument{"obj-1": baseDoc},
+			wantDataobjects:        1,
+			wantDataobjectsUpdated: 1,
+			wantSeenIDs:            []string{"obj-1"},
+		},
+		{
+			name: "multiple-documents-mixed-classification",
+			dbRows: [][]string{
+				{"obj-1", mustJSON(t, baseDoc)},
+				{"obj-2", mustJSON(t, changedDoc)},
+			},
+			avus:                   map[string]string{},
+			esDocs:                 map[string]ElasticsearchDocument{"obj-1": baseDoc},
+			wantDataobjects:        2,
+			wantDataobjectsAdded:   1, // obj-2 is new
+			wantDataobjectsUpdated: 0, // obj-1 is unchanged
+			wantSeenIDs:            []string{"obj-1", "obj-2"},
+		},
+	}
+
+	for _, c := range successCases {
+		t.Run(c.name, func(t *testing.T) {
+			icatTx, mock := newMockICATTx(t)
+			mockRows := sqlmock.NewRows([]string{"id", "json"})
+			for _, r := range c.dbRows {
+				mockRows.AddRow(r[0], r[1])
+			}
+			mock.ExpectQuery(".*").WillReturnRows(mockRows)
+
+			var rows rowMetadata
+			seenEsDocs := make(map[string]bool)
+			indexer := newTestBulkIndexer(t)
+
+			err := processDataobjects(context.Background(), log, &rows, c.avus, c.esDocs, seenEsDocs, indexer, &ESConnection{index: "test"}, icatTx, "iplant")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if rows.dataobjects != c.wantDataobjects {
+				t.Errorf("rows.dataobjects = %d, want %d", rows.dataobjects, c.wantDataobjects)
+			}
+			if rows.dataobjectsAdded != c.wantDataobjectsAdded {
+				t.Errorf("rows.dataobjectsAdded = %d, want %d", rows.dataobjectsAdded, c.wantDataobjectsAdded)
+			}
+			if rows.dataobjectsUpdated != c.wantDataobjectsUpdated {
+				t.Errorf("rows.dataobjectsUpdated = %d, want %d", rows.dataobjectsUpdated, c.wantDataobjectsUpdated)
+			}
+			for _, id := range c.wantSeenIDs {
+				if !seenEsDocs[id] {
+					t.Errorf("seenEsDocs missing %q", id)
+				}
+			}
+		})
+	}
+
+	t.Run("query-error", func(t *testing.T) {
+		icatTx, mock := newMockICATTx(t)
+		mock.ExpectQuery(".*").WillReturnError(fmt.Errorf("connection reset"))
+
+		var rows rowMetadata
+		seenEsDocs := make(map[string]bool)
+		indexer := newTestBulkIndexer(t)
+
+		err := processDataobjects(context.Background(), log, &rows, map[string]string{}, map[string]ElasticsearchDocument{}, seenEsDocs, indexer, &ESConnection{index: "test"}, icatTx, "iplant")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	t.Run("scan-error", func(t *testing.T) {
+		icatTx, mock := newMockICATTx(t)
+		mockRows := sqlmock.NewRows([]string{"id"}).AddRow("obj-1")
+		mock.ExpectQuery(".*").WillReturnRows(mockRows)
+
+		var rows rowMetadata
+		seenEsDocs := make(map[string]bool)
+		indexer := newTestBulkIndexer(t)
+
+		err := processDataobjects(context.Background(), log, &rows, map[string]string{}, map[string]ElasticsearchDocument{}, seenEsDocs, indexer, &ESConnection{index: "test"}, icatTx, "iplant")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	t.Run("invalid-json", func(t *testing.T) {
+		icatTx, mock := newMockICATTx(t)
+		mockRows := sqlmock.NewRows([]string{"id", "json"}).AddRow("obj-1", `{not valid json}`)
+		mock.ExpectQuery(".*").WillReturnRows(mockRows)
+
+		var rows rowMetadata
+		seenEsDocs := make(map[string]bool)
+		indexer := newTestBulkIndexer(t)
+
+		err := processDataobjects(context.Background(), log, &rows, map[string]string{}, map[string]ElasticsearchDocument{}, seenEsDocs, indexer, &ESConnection{index: "test"}, icatTx, "iplant")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	t.Run("invalid-avu-json", func(t *testing.T) {
+		icatTx, mock := newMockICATTx(t)
+		mockRows := sqlmock.NewRows([]string{"id", "json"}).AddRow("obj-1", mustJSON(t, baseDoc))
+		mock.ExpectQuery(".*").WillReturnRows(mockRows)
+
+		var rows rowMetadata
+		seenEsDocs := make(map[string]bool)
+		indexer := newTestBulkIndexer(t)
+		avus := map[string]string{"obj-1": `{broken`}
+
+		err := processDataobjects(context.Background(), log, &rows, avus, map[string]ElasticsearchDocument{}, seenEsDocs, indexer, &ESConnection{index: "test"}, icatTx, "iplant")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	t.Run("rows-err-after-iteration", func(t *testing.T) {
+		icatTx, mock := newMockICATTx(t)
+		mockRows := sqlmock.NewRows([]string{"id", "json"}).
+			AddRow("obj-1", mustJSON(t, baseDoc)).
+			RowError(0, fmt.Errorf("network timeout"))
+		mock.ExpectQuery(".*").WillReturnRows(mockRows)
+
+		var rows rowMetadata
+		seenEsDocs := make(map[string]bool)
+		indexer := newTestBulkIndexer(t)
+
+		err := processDataobjects(context.Background(), log, &rows, map[string]string{}, map[string]ElasticsearchDocument{}, seenEsDocs, indexer, &ESConnection{index: "test"}, icatTx, "iplant")
+		if err == nil {
+			t.Fatal("expected error from rows.Err(), got nil")
+		}
+	})
+}
+
+// --- processCollections ---
+
+func TestProcessCollections(t *testing.T) {
+	baseDoc := ElasticsearchDocument{
+		DocType:      "folder",
+		ID:           "coll-1",
+		Path:         "/iplant/home/user/myfolder",
+		Label:        "myfolder",
+		Creator:      "user#iplant",
+		FileType:     "",
+		DateCreated:  1000,
+		DateModified: 2000,
+		FileSize:     0,
+	}
+
+	changedDoc := baseDoc
+	changedDoc.DateModified = 3000
+
+	successCases := []struct {
+		name             string
+		dbRows           [][]string
+		avus             map[string]string
+		esDocs           map[string]ElasticsearchDocument
+		wantColls        int64
+		wantCollsAdded   int64
+		wantCollsUpdated int64
+		wantSeenIDs      []string
+	}{
+		{
+			name:      "empty-result-set",
+			dbRows:    nil,
+			avus:      map[string]string{},
+			esDocs:    map[string]ElasticsearchDocument{},
+			wantColls: 0,
+		},
+		{
+			name:           "new-collection-indexed",
+			dbRows:         [][]string{{"coll-1", mustJSON(t, baseDoc)}},
+			avus:           map[string]string{},
+			esDocs:         map[string]ElasticsearchDocument{},
+			wantColls:      1,
+			wantCollsAdded: 1,
+			wantSeenIDs:    []string{"coll-1"},
+		},
+		{
+			name:             "changed-collection-updated",
+			dbRows:           [][]string{{"coll-1", mustJSON(t, changedDoc)}},
+			avus:             map[string]string{},
+			esDocs:           map[string]ElasticsearchDocument{"coll-1": baseDoc},
+			wantColls:        1,
+			wantCollsUpdated: 1,
+			wantSeenIDs:      []string{"coll-1"},
+		},
+		{
+			name:        "unchanged-collection-no-action",
+			dbRows:      [][]string{{"coll-1", mustJSON(t, baseDoc)}},
+			avus:        map[string]string{},
+			esDocs:      map[string]ElasticsearchDocument{"coll-1": baseDoc},
+			wantColls:   1,
+			wantSeenIDs: []string{"coll-1"},
+		},
+		{
+			name:   "cyverse-metadata-merged",
+			dbRows: [][]string{{"coll-1", mustJSON(t, baseDoc)}},
+			avus: map[string]string{
+				"coll-1": `{"cyverse":[{"attribute":"project","value":"genomics","unit":""}]}`,
+			},
+			esDocs:         map[string]ElasticsearchDocument{},
+			wantColls:      1,
+			wantCollsAdded: 1,
+			wantSeenIDs:    []string{"coll-1"},
+		},
+		{
+			name:   "cyverse-metadata-triggers-update",
+			dbRows: [][]string{{"coll-1", mustJSON(t, baseDoc)}},
+			avus: map[string]string{
+				"coll-1": `{"cyverse":[{"attribute":"project","value":"genomics","unit":""}]}`,
+			},
+			esDocs:           map[string]ElasticsearchDocument{"coll-1": baseDoc},
+			wantColls:        1,
+			wantCollsUpdated: 1,
+			wantSeenIDs:      []string{"coll-1"},
+		},
+		{
+			name: "multiple-collections-mixed-classification",
+			dbRows: [][]string{
+				{"coll-1", mustJSON(t, baseDoc)},
+				{"coll-2", mustJSON(t, changedDoc)},
+			},
+			avus:             map[string]string{},
+			esDocs:           map[string]ElasticsearchDocument{"coll-1": baseDoc},
+			wantColls:        2,
+			wantCollsAdded:   1, // coll-2 is new
+			wantCollsUpdated: 0, // coll-1 unchanged
+			wantSeenIDs:      []string{"coll-1", "coll-2"},
+		},
+	}
+
+	for _, c := range successCases {
+		t.Run(c.name, func(t *testing.T) {
+			icatTx, mock := newMockICATTx(t)
+			mockRows := sqlmock.NewRows([]string{"id", "json"})
+			for _, r := range c.dbRows {
+				mockRows.AddRow(r[0], r[1])
+			}
+			mock.ExpectQuery(".*").WillReturnRows(mockRows)
+
+			var rows rowMetadata
+			seenEsDocs := make(map[string]bool)
+			indexer := newTestBulkIndexer(t)
+
+			err := processCollections(context.Background(), log, &rows, c.avus, c.esDocs, seenEsDocs, indexer, &ESConnection{index: "test"}, icatTx, "iplant")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if rows.colls != c.wantColls {
+				t.Errorf("rows.colls = %d, want %d", rows.colls, c.wantColls)
+			}
+			if rows.collsAdded != c.wantCollsAdded {
+				t.Errorf("rows.collsAdded = %d, want %d", rows.collsAdded, c.wantCollsAdded)
+			}
+			if rows.collsUpdated != c.wantCollsUpdated {
+				t.Errorf("rows.collsUpdated = %d, want %d", rows.collsUpdated, c.wantCollsUpdated)
+			}
+			for _, id := range c.wantSeenIDs {
+				if !seenEsDocs[id] {
+					t.Errorf("seenEsDocs missing %q", id)
+				}
+			}
+		})
+	}
+
+	t.Run("query-error", func(t *testing.T) {
+		icatTx, mock := newMockICATTx(t)
+		mock.ExpectQuery(".*").WillReturnError(fmt.Errorf("connection reset"))
+
+		var rows rowMetadata
+		seenEsDocs := make(map[string]bool)
+		indexer := newTestBulkIndexer(t)
+
+		err := processCollections(context.Background(), log, &rows, map[string]string{}, map[string]ElasticsearchDocument{}, seenEsDocs, indexer, &ESConnection{index: "test"}, icatTx, "iplant")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	t.Run("scan-error", func(t *testing.T) {
+		icatTx, mock := newMockICATTx(t)
+		mockRows := sqlmock.NewRows([]string{"id"}).AddRow("coll-1")
+		mock.ExpectQuery(".*").WillReturnRows(mockRows)
+
+		var rows rowMetadata
+		seenEsDocs := make(map[string]bool)
+		indexer := newTestBulkIndexer(t)
+
+		err := processCollections(context.Background(), log, &rows, map[string]string{}, map[string]ElasticsearchDocument{}, seenEsDocs, indexer, &ESConnection{index: "test"}, icatTx, "iplant")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	t.Run("invalid-json", func(t *testing.T) {
+		icatTx, mock := newMockICATTx(t)
+		mockRows := sqlmock.NewRows([]string{"id", "json"}).AddRow("coll-1", `{not valid}`)
+		mock.ExpectQuery(".*").WillReturnRows(mockRows)
+
+		var rows rowMetadata
+		seenEsDocs := make(map[string]bool)
+		indexer := newTestBulkIndexer(t)
+
+		err := processCollections(context.Background(), log, &rows, map[string]string{}, map[string]ElasticsearchDocument{}, seenEsDocs, indexer, &ESConnection{index: "test"}, icatTx, "iplant")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	t.Run("invalid-avu-json", func(t *testing.T) {
+		icatTx, mock := newMockICATTx(t)
+		mockRows := sqlmock.NewRows([]string{"id", "json"}).AddRow("coll-1", mustJSON(t, baseDoc))
+		mock.ExpectQuery(".*").WillReturnRows(mockRows)
+
+		var rows rowMetadata
+		seenEsDocs := make(map[string]bool)
+		indexer := newTestBulkIndexer(t)
+		avus := map[string]string{"coll-1": `{broken`}
+
+		err := processCollections(context.Background(), log, &rows, avus, map[string]ElasticsearchDocument{}, seenEsDocs, indexer, &ESConnection{index: "test"}, icatTx, "iplant")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	t.Run("rows-err-after-iteration", func(t *testing.T) {
+		icatTx, mock := newMockICATTx(t)
+		mockRows := sqlmock.NewRows([]string{"id", "json"}).
+			AddRow("coll-1", mustJSON(t, baseDoc)).
+			RowError(0, fmt.Errorf("network timeout"))
+		mock.ExpectQuery(".*").WillReturnRows(mockRows)
+
+		var rows rowMetadata
+		seenEsDocs := make(map[string]bool)
+		indexer := newTestBulkIndexer(t)
+
+		err := processCollections(context.Background(), log, &rows, map[string]string{}, map[string]ElasticsearchDocument{}, seenEsDocs, indexer, &ESConnection{index: "test"}, icatTx, "iplant")
+		if err == nil {
+			t.Fatal("expected error from rows.Err(), got nil")
+		}
+	})
 }
