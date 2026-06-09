@@ -78,6 +78,9 @@ func (doc ElasticsearchDocument) Equal(other ElasticsearchDocument) bool {
 	}
 
 	// Fields which shouldn't change for the same object
+	if doc.DocType != other.DocType {
+		return false
+	}
 	if doc.ID != other.ID {
 		return false
 	}
