@@ -204,7 +204,7 @@ func preprocessMetadata(rows *sql.Rows) (map[string]string, error) {
 
 		ret[id] = selectedJSON
 	}
-	return ret, nil
+	return ret, rows.Err()
 }
 
 func processDataobjects(context context.Context, log *logrus.Entry, rows *rowMetadata, avus map[string]string, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
@@ -270,7 +270,7 @@ func processDataobjects(context context.Context, log *logrus.Entry, rows *rowMet
 	}
 
 	log.Debugf("%d data-objects missing, %d data-objects to update", rows.dataobjectsAdded, rows.dataobjectsUpdated)
-	return nil
+	return dataobjects.Err()
 }
 
 func processCollections(context context.Context, log *logrus.Entry, rows *rowMetadata, avus map[string]string, esDocs map[string]ElasticsearchDocument, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection, tx *ICATTx, irodsZone string) error {
@@ -336,7 +336,7 @@ func processCollections(context context.Context, log *logrus.Entry, rows *rowMet
 	}
 
 	log.Debugf("%d collections missing, %d collections to update", rows.collsAdded, rows.collsUpdated)
-	return nil
+	return colls.Err()
 }
 
 func processDeletions(context context.Context, log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchDocument, esDocTypes map[string]string, seenEsDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection) error {

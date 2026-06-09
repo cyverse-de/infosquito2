@@ -79,7 +79,7 @@ func processTags(context context.Context, log *logrus.Entry, rows *rowMetadata, 
 		rows.processed++
 		rows.tags++
 	}
-	return nil
+	return tags.Err()
 }
 
 func processTagDeletions(context context.Context, log *logrus.Entry, rows *rowMetadata, esDocs map[string]ElasticsearchTag, seenDocs map[string]bool, indexer *esutils.BulkIndexer, es *ESConnection) error {
