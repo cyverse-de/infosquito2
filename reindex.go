@@ -296,8 +296,6 @@ func processCollections(context context.Context, log *logrus.Entry, rows *rowMet
 			return err
 		}
 
-		classification = classify(id, doc, esDocs)
-
 		_, ok := avus[id]
 		if ok {
 			var cymeta CyverseMetadata
@@ -309,6 +307,8 @@ func processCollections(context context.Context, log *logrus.Entry, rows *rowMet
 			doc.Metadata.Cyverse = cymeta.Cyverse
 			log.Debugf("Integrated CyVerse metadata: %+v", doc)
 		}
+
+		classification = classify(id, doc, esDocs)
 
 		switch classification {
 		case UpdateDocument:
