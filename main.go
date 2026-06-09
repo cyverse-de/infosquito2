@@ -247,8 +247,15 @@ func handleTags(context context.Context, del amqp.Delivery, db *DEDBConnection, 
 	ctx, span := otel.Tracer(otelName).Start(context, "handleTags")
 	defer span.End()
 
-	// XXX: reject messages on error
-	return ReindexTags(ctx, db, es, irodsZone)
+	err := ReindexTags(ctx, db, es, irodsZone)
+	if err != nil {
+		log.Errorf("Error reindexing tags: %s", err)
+		rejectErr := del.Reject(!del.Redelivered)
+		if rejectErr != nil {
+			log.Error(errors.Wrap(rejectErr, "Failed rejecting message after failing to reindex tags"))
+		}
+	}
+	return err
 }
 
 func main() {
