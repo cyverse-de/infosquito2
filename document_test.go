@@ -58,6 +58,8 @@ func TestElasticsearchDocumentEqual(t *testing.T) {
 		{"perms-different-length", ElasticsearchDocument{Path: "/foo/bar", UserPermissions: []UserPermission{UserPermission{"quux#bar", "write"}}}, ElasticsearchDocument{Path: "/foo/bar", UserPermissions: []UserPermission{UserPermission{"foo#bar", "read"}, UserPermission{"quux#bar", "write"}}}, false},
 		{"perms-different-length-2", ElasticsearchDocument{Path: "/foo/bar", UserPermissions: []UserPermission{UserPermission{"foo#bar", "read"}, UserPermission{"quux#bar", "write"}}}, ElasticsearchDocument{Path: "/foo/bar", UserPermissions: []UserPermission{UserPermission{"foo#bar", "read"}}}, false},
 		{"perms-out-of-order", ElasticsearchDocument{Path: "/foo/bar", UserPermissions: []UserPermission{UserPermission{"foo#bar", "read"}, UserPermission{"quux#bar", "write"}}}, ElasticsearchDocument{Path: "/foo/bar", UserPermissions: []UserPermission{UserPermission{"quux#bar", "write"}, UserPermission{"foo#bar", "read"}}}, true},
+		{"doctype-equal", ElasticsearchDocument{ID: "12345", DocType: "file"}, ElasticsearchDocument{ID: "12345", DocType: "file"}, true},
+		{"doctype-different", ElasticsearchDocument{ID: "12345", DocType: "file"}, ElasticsearchDocument{ID: "12345", DocType: "folder"}, false},
 	}
 
 	for _, c := range cases {
