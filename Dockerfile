@@ -1,4 +1,4 @@
-FROM golang:1.26 AS build
+FROM golang:1.27 AS build
 
 ARG git_commit=unknown
 ARG version="2.9.0"
